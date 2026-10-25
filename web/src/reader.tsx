@@ -51,6 +51,9 @@ interface ContinuousReaderProps {
   pointerCancel: () => void;
 }
 const route = getRouteApi("/read/$workId");
+function isBrowserFullscreen() {
+  return !!document.fullscreenElement || window.matchMedia("(display-mode: fullscreen)").matches;
+}
 const positions = new Map<string, number>();
 const readerId =
   globalThis.crypto.randomUUID?.() ||
@@ -248,7 +251,7 @@ export default function Reader() {
   const [chrome, setChrome] = useState(true),
     [metadata, setMetadata] = useState(false),
     [dimensions, setDimensions] = useState<Record<number, Dimensions>>({}),
-    [fullscreenError, setFullscreenError] = useState("");
+    [browserFullscreen, setBrowserFullscreen] = useState(isBrowserFullscreen);
   const enteredImmersive = useRef(false),
     surface = useRef<HTMLElement>(null),
     pointer = useRef<(GesturePoint & { id: number; type: string }) | null>(null),
@@ -439,14 +442,31 @@ export default function Reader() {
     },
     [workId],
   );
-  async function fullscreen() {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else if (surface.current?.requestFullscreen) await surface.current.requestFullscreen();
-      else setFullscreenError("Browser fullscreen is unavailable. Immersive reading still works.");
-    } catch {
-      setFullscreenError("Fullscreen was declined. Immersive reading still works.");
+  useEffect(() => {
+    // Covers both the Fullscreen API and browser-level fullscreen such as F11.
+    const media = window.matchMedia("(display-mode: fullscreen)");
+    function changed() {
+      const next = isBrowserFullscreen();
+      setBrowserFullscreen(next);
+      setChrome(!next);
     }
+    document.addEventListener("fullscreenchange", changed);
+    media.addEventListener("change", changed);
+    return () => {
+      document.removeEventListener("fullscreenchange", changed);
+      media.removeEventListener("change", changed);
+    };
+  }, []);
+  async function fullscreen() {
+    if (document.fullscreenElement) return document.exitFullscreen();
+    if (search.immersive) return exitImmersive();
+    const element = surface.current;
+    try {
+      if (element?.requestFullscreen) return await element.requestFullscreen();
+    } catch {
+      // Declined or unsupported for this element: fall back to in-page fullscreen.
+    }
+    immersive();
   }
   function preferences() {
     action.mutate({
@@ -510,6 +530,7 @@ export default function Reader() {
     );
     if (action) go(action);
   }
+  const fullscreenView = browserFullscreen || search.immersive;
   const zoomStyle: CSSProperties & { "--zoom": number } = { "--zoom": zoom };
   const origin = libraryOrigins.get(workId),
     work = result.data?.work;
@@ -521,27 +542,26 @@ export default function Reader() {
     <main
       id="main"
       ref={surface}
-      className={`reader ${search.immersive ? "immersive" : ""} ${chrome || !search.immersive ? "" : "chrome-hidden"} fit-${fit}`}
+      className={`reader ${fullscreenView ? "immersive" : ""} ${chrome || !fullscreenView ? "" : "chrome-hidden"} fit-${fit}`}
     >
       <header className="reader-toolbar">
         <div className="toolbar">
           <button
             onClick={() =>
-              search.immersive
-                ? exitImmersive()
+              fullscreenView
+                ? void fullscreen()
                 : origin
                   ? router.history.back()
                   : navigate({ to: "/" })
             }
           >
-            {search.immersive ? "Exit immersive" : "← Close"}
+            {fullscreenView ? "Exit fullscreen" : "← Close"}
           </button>
           <Link to="/" search={origin || {}}>
             Library
           </Link>
           <strong className="reader-title">{work?.title || "Reader"}</strong>
-          <button onClick={immersive}>{search.immersive ? "Normal view" : "Immersive"}</button>
-          <button onClick={fullscreen}>Browser fullscreen</button>
+          {!fullscreenView && <button onClick={() => void fullscreen()}>Fullscreen</button>}
         </div>
         <div className="toolbar reader-options">
           <label>
@@ -663,7 +683,6 @@ export default function Reader() {
       >
         {chrome ? "Hide controls" : "☰ Controls / Exit"}
       </button>
-      {fullscreenError && <p className="notice">{fullscreenError}</p>}
       <ErrorNotice error={result.error || action.error} />
       {result.isPending && <ReaderBackdrop key={workId} workId={workId} />}
       {metadata && (

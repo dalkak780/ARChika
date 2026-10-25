@@ -125,7 +125,7 @@ Results can be browsed with page numbers or infinite scroll. The default order i
 - Single page, two-page spread for portrait pages, or continuous scroll.
 - Keyboard, mouse and touch navigation; fit modes, zoom and resize.
 - Pages are sent as the original bytes when the browser can display them, so animated images keep their animation. When the browser can't decode AVIF, WebP or JXL, ARChika sends a PNG instead, and marks it as a still frame if the original was animated.
-- Immersive mode adds one history entry: Back leaves immersive mode on the same page, and Back again returns to the library with your filters and scroll position. Browser fullscreen is a separate toggle.
+- Fullscreen hides the reader controls automatically; tap the centre of the page or the controls button to show them again. Browser-level fullscreen (such as F11) is detected too. Where the Fullscreen API is unavailable or declined (for example on iPhone), the reader switches to an in-page fullscreen view instead: Back leaves it on the same page, and Back again returns to the library with your filters and scroll position.
 - ARChika doesn't keep a reading history.
 
 Archive formats are handled behind the [`archive.Adapter`](internal/archive/archive.go) interface. ZIP, RAR and 7z are read by a small pool of helper processes, and the next pages are read ahead based on how fast you're reading.
