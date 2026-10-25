@@ -89,7 +89,7 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
           {work.root_name} · {work.relative_path}
         </p>
         {work.error_code && (
-          <small className="error-text">
+          <small className="error-text" title={work.error_message}>
             {i18n.resolvedLanguage === "ko" && isErrorCode(work.error_code)
               ? t(`errors.${work.error_code}`)
               : work.error_code}

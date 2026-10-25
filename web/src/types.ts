@@ -32,6 +32,7 @@ export interface Work {
   registered_at: number;
   index_status: string;
   error_code?: string;
+  error_message?: string;
   cover: string;
   cover_unresolved: boolean;
   favorite: boolean;
@@ -57,6 +58,8 @@ export interface WorkDetail {
   work: Work;
   pages: Page[];
   capabilities: {
+    skipped?: Record<string, number>;
+    salvaged?: boolean;
     random_access_cost: string;
     solid: string;
     session_reuse: boolean;

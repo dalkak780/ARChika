@@ -304,6 +304,10 @@ export default function Reader() {
   const [autoSeconds, setAutoSeconds] = useState(user.preferences?.auto_next_seconds ?? 10);
   const [auto, setAuto] = useState(readAutoNext);
   const [remaining, setRemaining] = useState(autoSeconds);
+  const skippedPages = Object.values(result.data?.capabilities?.skipped ?? {}).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
   const [overlay, setOverlay] = useState<"overview" | "options" | "help" | null>(null);
   const [editingPage, setEditingPage] = useState(false);
   const [hidden, setHidden] = useState(document.hidden);
@@ -896,6 +900,9 @@ export default function Reader() {
               ? t("reader.savingPreferences")
               : t("reader.preferencesSaveAutomaticallyZoomAppliesToThisSession")}
           </p>
+          {skippedPages > 0 && (
+            <p className="muted small">{t("reader.skippedPages", { count: skippedPages })}</p>
+          )}
           <ErrorNotice error={preferenceAction.error} />
           {currentPage && (
             <a

@@ -61,11 +61,11 @@ func (a *App) roots(w http.ResponseWriter, r *http.Request, u User) {
 	jsonResponse(w, 200, out)
 }
 
-const aliasColumns = "al.id,w.id,al.root_id,r.name,al.path,r.path,al.original_name,al.title,w.kind,w.size,w.mtime,w.version,w.registered_at,w.index_status,w.error_code,COALESCE(w.physical_key,''),w.cover,w.cover_unresolved,COALESCE(NULLIF(w.modified_at,0),w.mtime)"
+const aliasColumns = "al.id,w.id,al.root_id,r.name,al.path,r.path,al.original_name,al.title,w.kind,w.size,w.mtime,w.version,w.registered_at,w.index_status,w.error_code,w.error_message,COALESCE(w.physical_key,''),w.cover,w.cover_unresolved,COALESCE(NULLIF(w.modified_at,0),w.mtime)"
 
 func scanAlias(s interface{ Scan(...any) error }) (Alias, error) {
 	var v Alias
-	e := s.Scan(&v.ID, &v.WorkID, &v.RootID, &v.RootName, &v.Path, &v.RootPath, &v.OriginalName, &v.Title, &v.Kind, &v.Size, &v.Mtime, &v.Version, &v.RegisteredAt, &v.IndexStatus, &v.ErrorCode, &v.PhysicalKey, &v.Cover, &v.CoverUnresolved, &v.ModifiedAt)
+	e := s.Scan(&v.ID, &v.WorkID, &v.RootID, &v.RootName, &v.Path, &v.RootPath, &v.OriginalName, &v.Title, &v.Kind, &v.Size, &v.Mtime, &v.Version, &v.RegisteredAt, &v.IndexStatus, &v.ErrorCode, &v.ErrorMessage, &v.PhysicalKey, &v.Cover, &v.CoverUnresolved, &v.ModifiedAt)
 	return v, e
 }
 func (a *App) AuthorizedAlias(ctx context.Context, u User, work string) (Alias, error) {

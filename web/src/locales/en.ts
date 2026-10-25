@@ -318,6 +318,8 @@ export const en = {
     localJson: "Local JSON",
   },
   reader: {
+    skippedPages_one: "{{count}} page could not be read and was skipped.",
+    skippedPages_other: "{{count}} pages could not be read and were skipped.",
     loadingReader: "Loading reader",
     thisPageCouldNotBeDecodedIncludingItsCompatible:
       "This page could not be decoded, including its compatible representation. Other pages remain available.",

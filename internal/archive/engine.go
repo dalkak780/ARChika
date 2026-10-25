@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"math"
@@ -22,18 +21,38 @@ import (
 
 // Error exposes stable application-facing failure codes without discarding decoder errors.
 type Error struct {
-	Kind string
-	Err  error
+	Kind    string
+	Err     error
+	message string
 }
 
-func (e *Error) Error() string           { return e.Kind + ": " + e.Err.Error() }
-func (e *Error) Unwrap() error           { return e.Err }
-func failure(code, message string) error { return &Error{code, errors.New(message)} }
+func (e *Error) Error() string { return e.Kind + ": " + e.Err.Error() }
+func (e *Error) Unwrap() error { return e.Err }
+func failure(code, message string) error {
+	return &Error{Kind: code, Err: errors.New(message), message: message}
+}
 
 // ErrLimit is a resource-policy rejection, not evidence of archive corruption.
 var ErrLimit = errors.New("archive resource limit exceeded")
 
-func limited(message string) error { return fmt.Errorf("%w: %s", ErrLimit, message) }
+type limitError struct{ message string }
+
+func (e *limitError) Error() string { return ErrLimit.Error() + ": " + e.message }
+func (e *limitError) Unwrap() error { return ErrLimit }
+func limited(message string) error  { return &limitError{message} }
+
+// Message returns only diagnostics authored here, never decoder or filesystem text.
+func Message(err error) string {
+	var failure *Error
+	if errors.As(err, &failure) {
+		return failure.message
+	}
+	var limit *limitError
+	if errors.As(err, &limit) {
+		return limit.message
+	}
+	return ""
+}
 
 // Code intentionally leaves unrecognized decoder failures unknown, rather than claiming corruption.
 func Code(err error) string {
@@ -94,6 +113,9 @@ type engine struct {
 	caps              Capabilities
 	ctx               context.Context
 	zip               *zip.Reader
+	zipNames          []string
+	salvaged          []zipLocal
+	zipOpenError      error
 	seven             *sevenzip.Reader
 	rar               *rardecode.Reader
 	rarFiles          []*rardecode.File
@@ -144,7 +166,7 @@ func New(root *os.Root, name, kind string, limits Limits) (Adapter, error) {
 			}
 			return nil, failure("unsupported_format", "gallery is not a directory")
 		}
-		e.caps = Capabilities{"constant", "no", true, "os.Root"}
+		e.caps = Capabilities{RandomAccessCost: "constant", Solid: "no", SessionReuse: true, Engine: "os.Root"}
 		return e, nil
 	case "zip", "cbz", "rar", "cbr", "7z", "cb7":
 	default:
@@ -167,18 +189,18 @@ func New(root *os.Root, name, kind string, limits Limits) (Adapter, error) {
 	switch e.kind {
 	case "zip", "cbz":
 		e.kind = "zip"
-		e.caps = Capabilities{"constant", "no", true, "archive/zip"}
-		e.zip, err = zip.NewReader(e, stat.Size())
+		e.caps = Capabilities{RandomAccessCost: "constant", Solid: "no", SessionReuse: true, Engine: "archive/zip"}
+		err = e.openZIP(stat.Size())
 	case "7z", "cb7":
 		e.kind = "7z"
-		e.caps = Capabilities{"unknown", "unknown", true, "bodgit/sevenzip"}
+		e.caps = Capabilities{RandomAccessCost: "unknown", Solid: "unknown", SessionReuse: true, Engine: "bodgit/sevenzip"}
 		e.seven, err = sevenzip.NewReader(e, stat.Size())
 		if err == nil {
 			err = e.inspectSeven()
 		}
 	case "rar", "cbr":
 		e.kind = "rar"
-		e.caps = Capabilities{"sequential", "unknown", true, "nwaples/rardecode/v2"}
+		e.caps = Capabilities{RandomAccessCost: "sequential", Solid: "unknown", SessionReuse: true, Engine: "nwaples/rardecode/v2"}
 		err = e.resetRAR()
 	}
 	e.metadataRemaining = -1
@@ -219,17 +241,15 @@ func (e *engine) inspectSeven() error {
 	counts := map[int]int{}
 	e.caps.Solid, e.caps.RandomAccessCost = "no", "constant"
 	for i, f := range e.seven.File {
-		if f.UncompressedSize > uint64(e.limits.MaxEntryBytes) {
-			return limited("archive entry bytes")
-		}
 		if f.FileInfo().IsDir() || f.UncompressedSize == 0 {
 			continue
 		}
 		e.sevenOffsets[i] = sizes[f.Stream]
-		if int64(f.UncompressedSize) > math.MaxInt64-sizes[f.Stream] {
-			return failure("corrupt", "solid stream size overflow")
+		if f.UncompressedSize > uint64(math.MaxInt64-sizes[f.Stream]) {
+			sizes[f.Stream] = math.MaxInt64
+		} else {
+			sizes[f.Stream] += int64(f.UncompressedSize)
 		}
-		sizes[f.Stream] += int64(f.UncompressedSize)
 		counts[f.Stream]++
 		if counts[f.Stream] > 1 {
 			e.caps.Solid, e.caps.RandomAccessCost = "yes", "sequential"
@@ -258,8 +278,15 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 	}
 	entries := []Entry{}
 	seen := map[string]bool{}
+	e.caps.Skipped = nil
+	skip := func(reason string) {
+		if e.caps.Skipped == nil {
+			e.caps.Skipped = map[string]int{}
+		}
+		e.caps.Skipped[reason]++
+	}
 	count := 0
-	add := func(name string, size int64, dir, regular, encrypted bool, locator int) error {
+	add := func(name string, size int64, dir, regular, encrypted, unknown bool, locator int) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -267,65 +294,63 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 		if count > e.limits.MaxEntries {
 			return limited("archive entry count")
 		}
-		normal, err := normalize(name)
-		if err != nil {
-			return err
+		if dir || !regular || mediaType(path.Clean(strings.ReplaceAll(name, "\\", "/"))) == "" {
+			return nil
 		}
-		if seen[normal] {
-			return failure("corrupt", "duplicate normalized entry path")
+		reason := ""
+		normal, err := normalize(name)
+		switch {
+		case encrypted:
+			reason = "encrypted"
+		case unknown:
+			reason = "unknown_size"
+		case size < 0 || size > e.limits.MaxEntryBytes:
+			reason = "too_large"
+		case err != nil:
+			reason = "unsafe_path"
+		case seen[normal]:
+			reason = "duplicate"
+		}
+		if reason != "" {
+			skip(reason)
+			return nil
 		}
 		seen[normal] = true
-		if encrypted {
-			return failure("encrypted_or_password_required", "encrypted archive entry")
-		}
-		if size < 0 {
-			return failure("corrupt", "invalid uncompressed entry size")
-		}
-		if size > e.limits.MaxEntryBytes {
-			return limited("archive entry bytes")
-		}
-		if dir || !regular {
-			return nil
-		}
-		mime := mediaType(normal)
-		if mime == "" {
-			return nil
-		}
 		hash := sha256.Sum256([]byte(normal))
-		entries = append(entries, Entry{Path: normal, ID: hex.EncodeToString(hash[:16]), Size: size, MIME: mime, Locator: locator})
+		entries = append(entries, Entry{Path: normal, ID: hex.EncodeToString(hash[:16]), Size: size, MIME: mediaType(normal), Locator: locator})
 		return nil
 	}
 	var err error
 	switch e.kind {
 	case "zip":
-		for i, f := range e.zip.File {
-			if err = add(f.Name, safeSize(f.UncompressedSize64), f.FileInfo().IsDir(), f.Mode().IsRegular(), f.Flags&1 != 0, i); err != nil {
-				break
+		if e.zip != nil {
+			for i, f := range e.zip.File {
+				if err = add(e.zipNames[i], safeSize(f.UncompressedSize64), f.FileInfo().IsDir(), f.Mode().IsRegular(), f.Flags&1 != 0, false, i); err != nil {
+					break
+				}
+			}
+		} else {
+			for i, f := range e.salvaged {
+				if err = add(e.zipNames[i], f.size, strings.HasSuffix(f.name, "/"), true, f.flags&1 != 0, false, i); err != nil {
+					break
+				}
 			}
 		}
 	case "7z":
 		for i, f := range e.seven.File {
-			if err = add(f.Name, safeSize(f.UncompressedSize), f.FileInfo().IsDir(), f.Mode().IsRegular(), false, i); err != nil {
+			if err = add(f.Name, safeSize(f.UncompressedSize), f.FileInfo().IsDir(), f.Mode().IsRegular(), false, false, i); err != nil {
 				break
 			}
 		}
 	case "rar":
-		// List uses the dependency's header-only scanner, not Next (which drains solid pixels).
-		// Bound its header allocations through a compressed metadata byte budget as well.
-		e.metadataRemaining = min(min(int64(e.limits.MaxEntries), 16384)*4096+65536, int64(64<<20))
-		e.rarFiles, err = rardecode.List("source.rar", rardecode.FileSystem(rarFS{e}), rardecode.MaxDictionarySize(max(256<<10, e.limits.MaxEntryBytes)))
-		e.metadataRemaining = -1
+		err = e.listRAR()
 		if err == nil {
 			e.caps.Solid = "no"
 			for i, f := range e.rarFiles {
 				if f.Solid {
 					e.caps.Solid = "yes"
 				}
-				if f.UnKnownSize {
-					err = failure("corrupt", "unknown RAR entry size")
-					break
-				}
-				if err = add(f.Name, f.UnPackedSize, f.IsDir, f.Mode().IsRegular() && f.LinkType == 0, f.Encrypted || f.HeaderEncrypted, i); err != nil {
+				if err = add(f.Name, f.UnPackedSize, f.IsDir, f.Mode().IsRegular() && f.LinkType == 0, f.Encrypted || f.HeaderEncrypted, f.UnKnownSize, i); err != nil {
 					break
 				}
 			}
@@ -344,8 +369,8 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 				var batch []fs.DirEntry
 				batch, err = f.ReadDir(128)
 				for _, d := range batch {
-					if d.IsDir() {
-						if err = add(d.Name(), 0, true, false, false, 0); err != nil {
+					if d.IsDir() || mediaType(path.Clean(strings.ReplaceAll(d.Name(), "\\", "/"))) == "" {
+						if err = add(d.Name(), 0, true, false, false, false, 0); err != nil {
 							break
 						}
 						continue
@@ -353,13 +378,16 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 					var info fs.FileInfo
 					info, err = e.gallery.Stat(path.Join(e.galleryPath, d.Name()))
 					if err != nil && d.Type()&fs.ModeSymlink != 0 {
-						err = nil
+						err = add(d.Name(), 0, false, false, false, false, 0)
+						if err != nil {
+							break
+						}
 						continue
 					}
 					if err != nil {
 						break
 					}
-					if err = add(d.Name(), info.Size(), info.IsDir(), info.Mode().IsRegular(), false, 0); err != nil {
+					if err = add(d.Name(), info.Size(), info.IsDir(), info.Mode().IsRegular(), false, false, 0); err != nil {
 						break
 					}
 				}
@@ -372,6 +400,9 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 	}
 	if err != nil {
 		return nil, e.caps, err
+	}
+	if len(entries) == 0 && e.zipOpenError != nil {
+		return nil, e.caps, e.zipOpenError
 	}
 	sort.Slice(entries, func(i, j int) bool { return pageLess(entries[i].Path, entries[j].Path) })
 	for i := range entries {
@@ -432,21 +463,34 @@ func (e *engine) Open(ctx context.Context, entry Entry) (io.ReadCloser, error) {
 			reader, actual, size = f, normal, stat.Size()
 		}
 	case "zip":
-		if entry.Locator < 0 || entry.Locator >= len(e.zip.File) {
+		if entry.Locator < 0 || entry.Locator >= len(e.zipNames) {
 			return nil, failure("corrupt", "stale page locator")
 		}
-		f := e.zip.File[entry.Locator]
-		actual, size = f.Name, safeSize(f.UncompressedSize64)
-		if f.Flags&1 != 0 {
-			return nil, failure("encrypted_or_password_required", "encrypted ZIP entry")
+		actual = e.zipNames[entry.Locator]
+		if e.zip == nil {
+			f := e.salvaged[entry.Locator]
+			size = f.size
+			if _, err = checkEntry(entry, actual, size, e.limits); err != nil {
+				return nil, err
+			}
+			if f.flags&1 != 0 {
+				return nil, failure("encrypted_or_password_required", "encrypted ZIP entry")
+			}
+			reader = e.openLocalZIP(f)
+		} else {
+			f := e.zip.File[entry.Locator]
+			size = safeSize(f.UncompressedSize64)
+			if f.Flags&1 != 0 {
+				return nil, failure("encrypted_or_password_required", "encrypted ZIP entry")
+			}
+			if !f.Mode().IsRegular() {
+				return nil, failure("unsupported_format", "page is not a regular file")
+			}
+			if _, err = checkEntry(entry, actual, size, e.limits); err != nil {
+				return nil, err
+			}
+			reader, err = f.Open()
 		}
-		if !f.Mode().IsRegular() {
-			return nil, failure("unsupported_format", "page is not a regular file")
-		}
-		if _, err = checkEntry(entry, actual, size, e.limits); err != nil {
-			return nil, err
-		}
-		reader, err = f.Open()
 	case "7z":
 		if entry.Locator < 0 || entry.Locator >= len(e.seven.File) {
 			return nil, failure("corrupt", "stale page locator")
@@ -619,7 +663,8 @@ func normalize(name string) (string, error) {
 		return "", limited("entry path length")
 	}
 	name = strings.ReplaceAll(name, "\\", "/")
-	if name == "" || strings.HasPrefix(name, "/") || strings.IndexByte(name, 0) >= 0 || strings.Contains(name, ":") {
+	driveAbsolute := len(name) >= 3 && (name[0] >= 'A' && name[0] <= 'Z' || name[0] >= 'a' && name[0] <= 'z') && name[1:3] == ":/"
+	if name == "" || strings.HasPrefix(name, "/") || driveAbsolute || strings.IndexByte(name, 0) >= 0 {
 		return "", failure("corrupt", "unsafe entry path")
 	}
 	for _, part := range strings.Split(name, "/") {
@@ -742,20 +787,36 @@ func (e *engine) resetRAR() error {
 	return err
 }
 
+func (e *engine) listRAR() error {
+	e.metadataRemaining = min(min(int64(e.limits.MaxEntries), 16384)*4096+65536, int64(64<<20))
+	defer func() { e.metadataRemaining = -1 }()
+	var err error
+	e.rarFiles, err = rardecode.List("source.rar", rardecode.FileSystem(rarFS{e}), rardecode.MaxDictionarySize(max(256<<10, e.limits.MaxEntryBytes)))
+	if err == nil && len(e.rarFiles) > e.limits.MaxEntries {
+		return limited("archive entry count")
+	}
+	return err
+}
+
 func (e *engine) openRAR(ctx context.Context, entry Entry) (io.ReadCloser, string, int64, error) {
 	if entry.Locator < 0 || entry.Locator >= e.limits.MaxEntries {
 		return nil, "", 0, failure("corrupt", "stale RAR locator")
 	}
-	// A header-only List gives direct non-solid handles within this session, without re-enumeration.
-	if entry.Locator < len(e.rarFiles) {
-		f := e.rarFiles[entry.Locator]
-		if !f.Solid && e.caps.Solid == "no" {
-			if _, err := checkEntry(entry, f.Name, f.UnPackedSize, e.limits); err != nil {
-				return nil, "", 0, err
-			}
-			r, err := f.Open()
-			return r, f.Name, f.UnPackedSize, err
+	if e.rarFiles == nil {
+		if err := e.listRAR(); err != nil {
+			return nil, "", 0, err
 		}
+	}
+	if entry.Locator >= len(e.rarFiles) {
+		return nil, "", 0, failure("corrupt", "stale RAR locator")
+	}
+	f := e.rarFiles[entry.Locator]
+	if !f.Solid {
+		if _, err := checkEntry(entry, f.Name, f.UnPackedSize, e.limits); err != nil {
+			return nil, "", 0, err
+		}
+		r, err := f.Open()
+		return r, f.Name, f.UnPackedSize, err
 	}
 	if e.rar == nil || entry.Locator <= e.rarIndex {
 		if err := e.resetRAR(); err != nil {
@@ -787,18 +848,20 @@ func (e *engine) openRAR(ctx context.Context, entry Entry) (io.ReadCloser, strin
 		e.rarIndex++
 		e.rarCurrent = h
 		if h.Encrypted || h.HeaderEncrypted {
-			return nil, "", 0, failure("encrypted_or_password_required", "encrypted RAR entry")
-		}
-		if _, err := normalize(h.Name); err != nil {
-			return nil, "", 0, err
+			if e.rarIndex == entry.Locator {
+				return nil, "", 0, failure("encrypted_or_password_required", "encrypted RAR entry")
+			}
+			e.rarRemaining = nil
+			continue
 		}
 		if h.UnKnownSize || h.UnPackedSize < 0 {
-			return nil, "", 0, failure("corrupt", "invalid RAR entry size")
+			if e.rarIndex == entry.Locator {
+				return nil, "", 0, failure("corrupt", "invalid RAR entry size")
+			}
+			e.rarRemaining = io.NopCloser(e.rar)
+		} else {
+			e.rarRemaining = &rarRemainder{r: e.rar, remaining: h.UnPackedSize}
 		}
-		if h.UnPackedSize > e.limits.MaxEntryBytes {
-			return nil, "", 0, limited("RAR entry bytes")
-		}
-		e.rarRemaining = &rarRemainder{r: e.rar, remaining: h.UnPackedSize}
 	}
 	h := e.rarCurrent
 	if h == nil || !h.Mode().IsRegular() || h.LinkType != 0 {

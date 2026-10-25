@@ -110,6 +110,7 @@ export function useAction<T = unknown, TBody = unknown>() {
   });
 }
 const detailedErrors = new Set([
+  "index_failed",
   "invalid_query",
   "invalid_config",
   "invalid_regex",

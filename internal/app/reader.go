@@ -39,7 +39,14 @@ func (a *App) workDetail(w http.ResponseWriter, r *http.Request, u User) {
 			code = "pending_stability"
 			status = 409
 		}
-		apiError(w, status, code, "Work is not readable yet; inspect its index status or retry explicitly")
+		message := "Work is not readable yet; inspect its index status or retry explicitly"
+		if fresh, err := a.AuthorizedAlias(r.Context(), u, al.WorkID); err == nil {
+			al = fresh
+			if code == "index_failed" && al.ErrorMessage != "" {
+				message = al.ErrorMessage
+			}
+		}
+		jsonResponse(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}, "work": al})
 		return
 	}
 	al, e = a.AuthorizedAlias(r.Context(), u, al.WorkID)

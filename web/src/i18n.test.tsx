@@ -118,3 +118,20 @@ test("structured results translate status labels without changing user data or m
     await i18n.changeLanguage("en");
   }
 });
+
+test("index failures retain the archive reason in both languages", async () => {
+  const error = new APIError(422, {
+    error: { code: "index_failed", message: "invalid ZIP archive" },
+  });
+  try {
+    for (const language of ["en", "ko"]) {
+      await i18n.changeLanguage(language);
+      assert.ok(
+        renderToStaticMarkup(<ErrorNotice error={error} />).includes("invalid ZIP archive"),
+      );
+      assert.ok(i18n.t("reader.skippedPages", { count: 3 }).includes("3"));
+    }
+  } finally {
+    await i18n.changeLanguage("en");
+  }
+});

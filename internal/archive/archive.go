@@ -18,10 +18,12 @@ type Entry struct {
 	Height  int    `json:"height"`
 }
 type Capabilities struct {
-	RandomAccessCost string `json:"random_access_cost"` // constant, sequential, or unknown
-	Solid            string `json:"solid"`              // yes, no, or unknown
-	SessionReuse     bool   `json:"session_reuse"`
-	Engine           string `json:"engine"`
+	Skipped          map[string]int `json:"skipped,omitempty"`
+	Salvaged         bool           `json:"salvaged,omitempty"`
+	RandomAccessCost string         `json:"random_access_cost"` // constant, sequential, or unknown
+	Solid            string         `json:"solid"`              // yes, no, or unknown
+	SessionReuse     bool           `json:"session_reuse"`
+	Engine           string         `json:"engine"`
 }
 type Limits struct {
 	MaxEntryBytes int64

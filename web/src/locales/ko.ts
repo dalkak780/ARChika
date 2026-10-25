@@ -317,6 +317,8 @@ export const ko = {
     localJson: "로컬 JSON",
   },
   reader: {
+    skippedPages_one: "읽을 수 없는 페이지 {{count}}개를 건너뛰었습니다.",
+    skippedPages_other: "읽을 수 없는 페이지 {{count}}개를 건너뛰었습니다.",
     loadingReader: "리더 불러오는 중",
     thisPageCouldNotBeDecodedIncludingItsCompatible:
       "호환 형식으로도 페이지를 디코딩할 수 없습니다. 다른 페이지는 계속 볼 수 있습니다.",

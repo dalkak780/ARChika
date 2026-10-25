@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS scan_dirs(job_id TEXT NOT NULL REFERENCES jobs(id) ON
 CREATE TABLE IF NOT EXISTS scan_seen(job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,physical_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(job_id,physical_key));
 CREATE TABLE IF NOT EXISTS watch_events(root_id TEXT NOT NULL,path TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'change',observed INTEGER NOT NULL,PRIMARY KEY(root_id,path));
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,root_id TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL,created INTEGER NOT NULL);
- PRAGMA user_version=3;
+ PRAGMA user_version=4;
 `
 
 func OpenDB(c Config) (*sql.DB, error) {
@@ -81,7 +81,7 @@ func OpenDB(c Config) (*sql.DB, error) {
 	if e = db.QueryRow("PRAGMA user_version").Scan(&version); e != nil {
 		return nil, e
 	}
-	if version > 3 {
+	if version > 4 {
 		return nil, fmt.Errorf("database schema %d is newer than supported", version)
 	}
 	if version == 1 {
@@ -106,6 +106,22 @@ func OpenDB(c Config) (*sql.DB, error) {
 			return nil, err
 		}
 		_, err = tx.Exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3")
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+		if err != nil {
+			return nil, err
+		}
+		version = 3
+	}
+	if version == 3 {
+		tx, err := db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec("UPDATE works SET index_status='stale',error_code='',error_message='' WHERE index_status='error' AND error_code IN ('corrupt','encrypted_or_password_required','unknown'); PRAGMA user_version=4")
 		if err == nil {
 			err = tx.Commit()
 		} else {

@@ -30,6 +30,7 @@ type decoderResponse struct {
 	Locators     []int           `json:"locators,omitempty"`
 	Capabilities ar.Capabilities `json:"capabilities"`
 	Code         string          `json:"code,omitempty"`
+	Message      string          `json:"message,omitempty"`
 	Size         int64           `json:"size,omitempty"`
 	Error        string          `json:"error,omitempty"`
 }
@@ -104,6 +105,7 @@ func DecoderMain() error {
 		}
 		if e != nil {
 			response.Code = ar.Code(e)
+			response.Message = ar.Message(e)
 			response.Error = "decoder operation failed"
 			response.Size = 0
 			bytes = nil
@@ -207,7 +209,7 @@ func (r *remoteAdapter) call(ctx context.Context, req decoderRequest) (decoderRe
 			}
 		}
 		if res.err == nil && res.response.Error != "" {
-			res.err = &remoteError{res.response.Code}
+			res.err = &remoteError{code: res.response.Code, message: res.response.Message}
 		}
 		done <- res
 	}()
@@ -229,7 +231,7 @@ func (r *remoteAdapter) call(ctx context.Context, req decoderRequest) (decoderRe
 	}
 }
 
-type remoteError struct{ code string }
+type remoteError struct{ code, message string }
 
 func (e *remoteError) Error() string { return "archive decoder: " + e.code }
 func (r *remoteAdapter) List(ctx context.Context) ([]ar.Entry, ar.Capabilities, error) {

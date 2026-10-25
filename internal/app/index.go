@@ -66,9 +66,9 @@ func (a *App) ensureIndex(ctx context.Context, al Alias) error {
 	}
 }
 func (a *App) buildIndex(ctx context.Context, al Alias) error {
-	var status string
+	var status, code string
 	var version int64
-	e := a.DB.QueryRowContext(ctx, "SELECT index_status,version FROM works WHERE id=?", al.WorkID).Scan(&status, &version)
+	e := a.DB.QueryRowContext(ctx, "SELECT index_status,version,error_code FROM works WHERE id=?", al.WorkID).Scan(&status, &version, &code)
 	if e != nil {
 		return e
 	}
@@ -78,7 +78,7 @@ func (a *App) buildIndex(ctx context.Context, al Alias) error {
 	if status == "ready" {
 		return nil
 	}
-	if status == "error" {
+	if status == "error" && (code != "io_error" || background(ctx) && !promoted(ctx)) {
 		return errIndexFailed
 	}
 	if status == "pending_stability" {
@@ -141,7 +141,7 @@ func (a *App) buildIndex(ctx context.Context, al Alias) error {
 		return ctx.Err()
 	}
 	if e != nil {
-		_, _ = a.DB.ExecContext(ctx, "UPDATE works SET index_status='error',error_code=?,error_message=?,error_at=? WHERE id=? AND version=?", decodeErrorCode(e), safeError(e), now(), al.WorkID, al.Version)
+		_, _ = a.DB.ExecContext(ctx, "UPDATE works SET index_status='error',error_code=?,error_message=?,error_at=? WHERE id=? AND version=?", decodeErrorCode(e), indexError(e), now(), al.WorkID, al.Version)
 		return e
 	}
 	if len(entries) == 0 {
@@ -320,4 +320,15 @@ func (a *App) verifyDirectoryPage(ctx context.Context, al Alias, p ar.Entry) err
 		return errors.New("source_changed")
 	}
 	return nil
+}
+
+func indexError(err error) string {
+	if message := ar.Message(err); message != "" {
+		return message
+	}
+	var remote *remoteError
+	if errors.As(err, &remote) && remote.message != "" {
+		return remote.message
+	}
+	return safeError(err)
 }

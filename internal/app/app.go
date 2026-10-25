@@ -53,6 +53,7 @@ type Alias struct {
 	RegisteredAt    int64  `json:"registered_at"`
 	IndexStatus     string `json:"index_status"`
 	ErrorCode       string `json:"error_code,omitempty"`
+	ErrorMessage    string `json:"error_message,omitempty"`
 	PhysicalKey     string `json:"-"`
 	Cover           string `json:"cover"`
 	CoverUnresolved bool   `json:"cover_unresolved"`

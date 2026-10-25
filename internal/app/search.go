@@ -166,7 +166,7 @@ func (a *App) works(w http.ResponseWriter, r *http.Request, u User) {
 	for rows.Next() {
 		var v Alias
 		var titleKey string
-		e = rows.Scan(&v.ID, &v.WorkID, &v.RootID, &v.RootName, &v.Path, &v.RootPath, &v.OriginalName, &v.Title, &v.Kind, &v.Size, &v.Mtime, &v.Version, &v.RegisteredAt, &v.IndexStatus, &v.ErrorCode, &v.PhysicalKey, &v.Cover, &v.CoverUnresolved, &v.ModifiedAt, &titleKey)
+		e = rows.Scan(&v.ID, &v.WorkID, &v.RootID, &v.RootName, &v.Path, &v.RootPath, &v.OriginalName, &v.Title, &v.Kind, &v.Size, &v.Mtime, &v.Version, &v.RegisteredAt, &v.IndexStatus, &v.ErrorCode, &v.ErrorMessage, &v.PhysicalKey, &v.Cover, &v.CoverUnresolved, &v.ModifiedAt, &titleKey)
 		if e != nil {
 			break
 		}

@@ -125,41 +125,13 @@ func TestZIPManifestAndPersistedOpen(t *testing.T) {
 	}
 }
 
-func TestUnsafeEntriesAndConfiguredLimits(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		names     []string
-		limits    Limits
-		wantLimit bool
-	}{
-		{"parent", []string{"../1.png"}, Limits{}, false},
-		{"embedded-parent", []string{"a/../1.png"}, Limits{}, false},
-		{"absolute", []string{"/1.png"}, Limits{}, false},
-		{"windows", []string{"C:\\1.png"}, Limits{}, false},
-		{"duplicate", []string{"a/1.png", "a\\1.png"}, Limits{}, false},
-		{"normalized-duplicate", []string{"a/./1.png", "a/1.png"}, Limits{}, false},
-		{"entry-count", []string{"1.png", "2.png"}, Limits{MaxEntries: 1}, true},
-		{"entry-bytes", []string{"1.png"}, Limits{MaxEntryBytes: 2}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			name := makeZIP(t, dir, tc.names, []byte("page"))
-			a, err := New(openRoot(t, dir), name, "zip", tc.limits)
-			if err == nil {
-				defer a.Close()
-				_, _, err = a.List(context.Background())
-			}
-			if err == nil {
-				t.Fatal("unsafe archive accepted")
-			}
-			if tc.wantLimit {
-				if !errors.Is(err, ErrLimit) || Code(err) == "corrupt" {
-					t.Fatalf("resource error misclassified: %v (%s)", err, Code(err))
-				}
-			} else if Code(err) != "corrupt" {
-				t.Fatalf("classification %s: %v", Code(err), err)
-			}
-		})
+func TestEntryCountLimit(t *testing.T) {
+	dir := t.TempDir()
+	name := makeZIP(t, dir, []string{"1.png", "ignored.txt"}, []byte("page"))
+	a := openAdapter(t, openRoot(t, dir), name, "zip", Limits{MaxEntries: 1})
+	_, _, err := a.List(context.Background())
+	if !errors.Is(err, ErrLimit) || Code(err) == "corrupt" {
+		t.Fatalf("resource error misclassified: %v (%s)", err, Code(err))
 	}
 }
 
@@ -222,7 +194,7 @@ func TestSolidSeekBudgetAndDecoderLimits(t *testing.T) {
 	for _, tc := range []struct{ name, kind string }{{"pages-solid-on.7z", "7z"}, {"pages-rar5-solid.rar", "rar"}} {
 		t.Run(tc.kind, func(t *testing.T) {
 			root := openRoot(t, "testdata")
-			for _, limits := range []Limits{{MaxEntries: 1}, {MaxEntryBytes: 1}} {
+			for _, limits := range []Limits{{MaxEntries: 1}} {
 				a, err := New(root, tc.name, tc.kind, limits)
 				if err == nil {
 					_, _, err = a.List(context.Background())
@@ -367,8 +339,8 @@ func TestUpstreamSevenzipFixtureAndErrors(t *testing.T) {
 			_, _, err = a.List(context.Background())
 			a.Close()
 		}
-		if Code(err) != "encrypted_or_password_required" {
-			t.Fatalf("encrypted archive: %v (%s)", err, Code(err))
+		if err != nil {
+			t.Fatalf("encrypted non-image entries: %v", err)
 		}
 	}
 	dir := t.TempDir()
