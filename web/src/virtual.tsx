@@ -99,15 +99,18 @@ export function VirtualContinuousPages({
   const virtual = useVirtualizer({
     count: pages.length,
     getScrollElement: () => container.current,
-    estimateSize: (i) =>
-      Math.max(
+    estimateSize: (i) => {
+      const page = pages[i];
+      return Math.max(
         window.innerHeight * 0.35,
-        pages[i]!.width && pages[i]!.height
-          ? (width * zoom * pages[i]!.height) / pages[i]!.width + 16
-          : width * 1.4,
-      ),
+        page?.width && page.height ? (width * zoom * page.height) / page.width + 16 : width * 1.4,
+      );
+    },
     overscan: 1,
-    getItemKey: (i) => pages[i]!.entry_id || pages[i]!.ordinal,
+    getItemKey: (i) => {
+      const page = pages[i];
+      return page ? page.entry_id || page.ordinal : i;
+    },
   });
   const scrollToCurrentIndex = useEffectEvent(() => {
     virtual.scrollToIndex(index, { align: "start" });
@@ -128,7 +131,9 @@ export function VirtualContinuousPages({
   const rows = virtual.getVirtualItems();
   function scroll() {
     if (programmatic.current) return;
-    const offset = container.current!.scrollTop;
+    const element = container.current;
+    if (!element) return;
+    const offset = element.scrollTop;
     const current = rows.find((row) => row.end > offset + 30);
     if (current && current.index !== lastReported.current) {
       lastReported.current = current.index;
@@ -154,18 +159,21 @@ export function VirtualContinuousPages({
           width: `${zoom * 100}%`,
         }}
       >
-        {rows.map((row) => (
-          <div
-            key={row.key}
-            data-index={row.index}
-            ref={virtual.measureElement}
-            className="continuous-page"
-            style={{ transform: `translateY(${row.start}px)` }}
-          >
-            {renderPage(pages[row.index]!)}
-            <span className="page-number">{row.index + 1}</span>
-          </div>
-        ))}
+        {rows.map((row) => {
+          const page = pages[row.index];
+          return (
+            <div
+              key={row.key}
+              data-index={row.index}
+              ref={virtual.measureElement}
+              className="continuous-page"
+              style={{ transform: `translateY(${row.start}px)` }}
+            >
+              {page ? renderPage(page) : null}
+              <span className="page-number">{row.index + 1}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

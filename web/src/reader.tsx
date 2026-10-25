@@ -12,6 +12,7 @@ import React, {
 } from "react";
 import { Link, getRouteApi, useNavigate, useLocation, useRouter } from "@tanstack/react-router";
 import { VirtualContinuousPages } from "./virtual.tsx";
+import { trimOldest } from "./lru.ts";
 import { useAPI, useAction, useAuth, api, encoded, ErrorNotice, Pending } from "./api.tsx";
 import {
   visiblePages,
@@ -219,7 +220,7 @@ export default function Reader() {
   useEffect(() => {
     if (!pages.length) return;
     positions.set(workId, pageIndex);
-    if (positions.size > 64) positions.delete(positions.keys().next().value!);
+    trimOldest(positions, 64);
     if (urlPage !== pageIndex + 1)
       void navigate({
         search: (old) => ({ ...old, page: pageIndex + 1 }),
@@ -300,11 +301,11 @@ export default function Reader() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [go, mode, metadata, search.immersive]);
-  const prefetchPage = useEffectEvent(() => pages[pageIndex]!.ordinal);
+  const prefetchPage = useEffectEvent(() => pages[pageIndex]?.ordinal);
   useEffect(() => {
-    if (!pages.length) return;
-    const controller = new AbortController();
     const ordinal = prefetchPage();
+    if (!pages.length || ordinal === undefined) return;
+    const controller = new AbortController();
     const timer = setTimeout(
       () =>
         api(`/works/${encoded(workId)}/prefetch`, {
@@ -408,8 +409,9 @@ export default function Reader() {
         viewportWidth: window.innerWidth,
       },
     );
-    if (action === "chrome" && start.type === "mouse" && mode !== "scroll") {
-      const bounds = surface.current!.getBoundingClientRect(),
+    const element = surface.current;
+    if (action === "chrome" && start.type === "mouse" && mode !== "scroll" && element) {
+      const bounds = element.getBoundingClientRect(),
         position = (event.clientX - bounds.left) / bounds.width;
       go(position < 0.23 ? "previous" : position > 0.77 ? "next" : "chrome");
     } else if (action) go(action);
@@ -419,6 +421,8 @@ export default function Reader() {
     work = result.data?.work;
   // Read optional fields once; compiled memo dependencies must not dereference an unloaded work.
   const favorite = work?.favorite ?? false;
+  const nextPage = pages[pageIndex + 1],
+    lastShown = shown.at(-1) ?? pageIndex;
   return (
     <main
       id="main"
@@ -529,14 +533,16 @@ export default function Reader() {
           {pages.length > 0 && (
             <>
               <button
-                onClick={() =>
+                onClick={() => {
+                  const current = pages[pageIndex];
+                  if (!current) return;
                   action.mutate({
                     path: `/works/${encoded(workId)}/cover`,
                     method: "PUT",
                     invalidate: [["work", workId], ["works"], ["works-infinite"]],
-                    body: { entry_id: pages[pageIndex]!.entry_id },
-                  })
-                }
+                    body: { entry_id: current.entry_id },
+                  });
+                }}
               >
                 Use page as cover
               </button>
@@ -608,25 +614,28 @@ export default function Reader() {
               onLostPointerCapture={pointerCancel}
             >
               <div className={`spread ${shown.length === 2 ? "two" : ""}`} style={zoomStyle}>
-                {shown.map((i) => (
-                  <PageImage
-                    key={`${workId}-${pages[i]!.entry_id}-${pages[i]!.ordinal}`}
-                    workId={workId}
-                    page={pages[i]!}
-                    width={resize}
-                    onDimensions={dimensionsLoaded}
-                  />
-                ))}
+                {shown.map((i) => {
+                  const page = pages[i];
+                  return page ? (
+                    <PageImage
+                      key={`${workId}-${page.entry_id}-${page.ordinal}`}
+                      workId={workId}
+                      page={page}
+                      width={resize}
+                      onDimensions={dimensionsLoaded}
+                    />
+                  ) : null;
+                })}
               </div>
               {layout === "spread" &&
                 known(pages[pageIndex]) &&
                 !wide(pages[pageIndex]) &&
-                pages[pageIndex + 1] &&
-                !known(pages[pageIndex + 1]) && (
+                nextPage &&
+                !known(nextPage) && (
                   <div className="dimension-probe" aria-hidden="true">
                     <PageImage
                       workId={workId}
-                      page={pages[pageIndex + 1]!}
+                      page={nextPage}
                       width={resize}
                       onDimensions={dimensionsLoaded}
                     />
@@ -652,12 +661,12 @@ export default function Reader() {
               />
             </label>
             <span role="status">
-              {mode === "paged" && shown.length > 1 ? `–${shown.at(-1)! + 1} ` : ""}
+              {mode === "paged" && shown.length > 1 ? `–${lastShown + 1} ` : ""}
               of {pages.length}
             </span>
             <button
               onClick={() => go("next")}
-              disabled={(mode === "paged" ? shown.at(-1)! : pageIndex) >= pages.length - 1}
+              disabled={(mode === "paged" ? lastShown : pageIndex) >= pages.length - 1}
             >
               Next →
             </button>
@@ -675,7 +684,10 @@ function ContinuousReader(props: ContinuousReaderProps) {
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   useLayoutEffect(() => {
-    const observer = new ResizeObserver((entries) => setWidth(entries[0]!.contentRect.width));
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setWidth(entry.contentRect.width);
+    });
     if (container.current) observer.observe(container.current);
     return () => observer.disconnect();
   }, []);

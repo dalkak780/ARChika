@@ -10,6 +10,8 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
       "react/rules-of-hooks": "error",
       "react/exhaustive-deps": "warn",
+      // React Compiler can hoist an asserted property read into a render-time memo check.
+      "typescript/no-non-null-assertion": "error",
     },
     options: { typeAware: true, typeCheck: true },
     overrides: [

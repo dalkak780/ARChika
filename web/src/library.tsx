@@ -5,6 +5,7 @@ import React, { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } f
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { VirtualLibraryRows } from "./virtual.tsx";
+import { trimOldest } from "./lru.ts";
 import { api, APIError, encoded, useAPI, useAction, ErrorNotice, Pending } from "./api.tsx";
 
 const route = getRouteApi("/");
@@ -28,10 +29,11 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
   const action = useAction<unknown, { favorite: boolean }>();
   const client = useQueryClient();
   const thumbnailKey = `${work.id}:${work.version}`;
+  const nextFavorite = !work.favorite;
   const [failed, setFailed] = useState(() => failedThumbnails.has(thumbnailKey));
   function failThumbnail() {
     failedThumbnails.set(thumbnailKey, true);
-    if (failedThumbnails.size > 512) failedThumbnails.delete(failedThumbnails.keys().next().value!);
+    trimOldest(failedThumbnails, 512);
     setFailed(true);
   }
   return (
@@ -42,7 +44,7 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
         search={{ page: 1, immersive: false }}
         onClick={() => {
           libraryOrigins.set(String(work.id), search);
-          if (libraryOrigins.size > 64) libraryOrigins.delete(libraryOrigins.keys().next().value!);
+          trimOldest(libraryOrigins, 64);
         }}
         className="work-link"
       >
@@ -78,15 +80,15 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
             {
               path: `/works/${encoded(work.id)}/favorite`,
               method: "PUT",
-              body: { favorite: !work.favorite },
+              body: { favorite: nextFavorite },
               invalidate: [],
             },
             {
-              onSuccess: (_, variables) => {
+              onSuccess: () => {
                 const updatePage = <T extends WorksPage>(page: T): T => ({
                   ...page,
                   items: page.items.map((item) =>
-                    item.id === work.id ? { ...item, favorite: variables.body!.favorite } : item,
+                    item.id === work.id ? { ...item, favorite: nextFavorite } : item,
                   ),
                 });
                 client.setQueriesData<WorksPage>({ queryKey: ["works"] }, (data) =>
@@ -284,7 +286,7 @@ function PagedLibrary({
     window.scrollTo(0, scrollPositions.get(key) || 0);
     const save = () => {
       scrollPositions.set(key, window.scrollY);
-      if (scrollPositions.size > 64) scrollPositions.delete(scrollPositions.keys().next().value!);
+      trimOldest(scrollPositions, 64);
     };
     window.addEventListener("scroll", save, { passive: true });
     return () => window.removeEventListener("scroll", save);
@@ -426,13 +428,13 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
     const top = event.currentTarget.scrollTop,
       pageHeight = Math.ceil(search.limit / columns) * 312;
     scrollPositions.set(key, top);
-    if (scrollPositions.size > 64) scrollPositions.delete(scrollPositions.keys().next().value!);
+    trimOldest(scrollPositions, 64);
     if (startPage)
       infiniteResume.set(key, {
         page: startPage + Math.floor(top / pageHeight),
         offset: top % pageHeight,
       });
-    if (infiniteResume.size > 64) infiniteResume.delete(infiniteResume.keys().next().value!);
+    trimOldest(infiniteResume, 64);
   }
   useLayoutEffect(() => {
     if (
@@ -448,7 +450,9 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
   }, [startPage, columns, search.limit]);
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
-      const capacity = Math.max(1, Math.floor(entries[0]!.contentRect.width / 180));
+      const entry = entries[0];
+      if (!entry) return;
+      const capacity = Math.max(1, Math.floor(entry.contentRect.width / 180));
       setColumns(capacity >= 5 ? 5 : capacity >= 4 ? 4 : capacity >= 2 ? 2 : 1);
     });
     if (container.current) observer.observe(container.current);
