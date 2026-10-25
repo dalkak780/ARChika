@@ -87,6 +87,8 @@ For HTTPS deployments, set `secure_cookies: true` and make sure the reverse prox
 
 ### Accounts
 
+The UI supports English and Korean, follows your browser by default, and can be changed in Account.
+
 Administrators create accounts, disable them, reset passwords and grant access to individual roots from the UI. New non-admin accounts can't see any root until they are granted one. Passwords are hashed with Argon2id. Sessions are stored server-side and use HttpOnly, SameSite cookies with CSRF tokens.
 
 ## Library and indexing

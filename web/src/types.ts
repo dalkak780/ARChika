@@ -1,5 +1,6 @@
 // Response shapes from internal/app handlers and internal/archive.Entry.
 export interface Preferences {
+  language?: string;
   reader_mode?: "paged" | "scroll";
   layout?: "single" | "spread";
   fit?: "viewport" | "width" | "height" | "original";

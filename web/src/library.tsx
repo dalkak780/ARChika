@@ -1,3 +1,5 @@
+import { statusLabel, isErrorCode } from "./i18n.ts";
+import { useTranslation } from "react-i18next";
 import type { FormEvent, UIEvent } from "react";
 import type { InfiniteData } from "@tanstack/react-query";
 import type {
@@ -38,6 +40,7 @@ function workPath(search: LibrarySearch, page: number, cursor?: string) {
   return `/works?${params}`;
 }
 function Card({ work, search }: { work: Work; search: LibrarySearch }) {
+  const { t, i18n } = useTranslation();
   const action = useAction<unknown, { favorite: boolean }>();
   const client = useQueryClient();
   const thumbnailKey = `${work.id}:${work.version}`;
@@ -62,8 +65,11 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
       >
         <div className="cover">
           {failed ? (
-            <span className="cover-placeholder" aria-label="Cover unavailable">
-              ▧<small>{work.cover_unresolved ? "Cover needs selection" : "No preview"}</small>
+            <span className="cover-placeholder" aria-label={t("library.coverUnavailable")}>
+              ▧
+              <small>
+                {work.cover_unresolved ? t("library.coverNeedsSelection") : t("library.noPreview")}
+              </small>
             </span>
           ) : (
             <img
@@ -74,17 +80,25 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
               onError={failThumbnail}
             />
           )}
-          <span className={`status ${work.index_status}`}>{work.index_status || "registered"}</span>
+          <span className={`status ${work.index_status}`}>
+            {statusLabel(work.index_status || "registered", t)}
+          </span>
         </div>
         <h3 title={work.title}>{work.title}</h3>
         <p title={work.relative_path}>
           {work.root_name} · {work.relative_path}
         </p>
-        {work.error_code && <small className="error-text">{work.error_code}</small>}
+        {work.error_code && (
+          <small className="error-text">
+            {i18n.resolvedLanguage === "ko" && isErrorCode(work.error_code)
+              ? t(`errors.${work.error_code}`)
+              : work.error_code}
+          </small>
+        )}
       </Link>
       <button
         className="favorite-toggle"
-        aria-label={`${work.favorite ? "Remove favorite" : "Add favorite"}: ${work.title}`}
+        aria-label={`${work.favorite ? t("library.removeFavorite") : t("library.addFavorite")}: ${work.title}`}
         aria-pressed={work.favorite}
         disabled={action.isPending}
         onClick={() =>
@@ -122,6 +136,7 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
   );
 }
 export default function Library() {
+  const { t } = useTranslation();
   const search = route.useSearch(),
     navigate = useNavigate({ from: "/" });
   const [query, setQuery] = useState(search.q),
@@ -161,22 +176,22 @@ export default function Library() {
     <main id="main" className="library">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">BROWSE YOUR COLLECTION</div>
-          <h1>Library</h1>
+          <div className="eyebrow">{t("library.browseYourCollection")}</div>
+          <h1>{t("nav.library")}</h1>
         </div>
         <div className="toolbar library-controls">
-          <div className="segmented" aria-label="Browse mode">
+          <div className="segmented" aria-label={t("library.browseMode")}>
             <button
               aria-pressed={search.browse === "all"}
               onClick={() => update({ browse: "all", root: "", folder: "" })}
             >
-              All works
+              {t("library.allWorks")}
             </button>
             <button
               aria-pressed={search.browse === "folders"}
               onClick={() => update({ browse: "folders", folder: "" })}
             >
-              Folders
+              {t("library.folders")}
             </button>
           </div>
           <button
@@ -184,25 +199,26 @@ export default function Library() {
             aria-pressed={search.q === "favorite:true"}
             onClick={() => update({ q: search.q === "favorite:true" ? "" : "favorite:true" })}
           >
-            <Icon name="favorite" /> Favorites
+            <Icon name="favorite" />
+            {t("library.favorites")}
           </button>
-          <div className="segmented" aria-label="Library view">
+          <div className="segmented" aria-label={t("library.libraryView")}>
             <button
               aria-pressed={search.view === "pages"}
               onClick={() => update({ view: "pages" })}
             >
-              Pages
+              {t("library.pages")}
             </button>
             <button
               aria-pressed={search.view === "infinite"}
               onClick={() => update({ view: "infinite" })}
             >
-              Infinite
+              {t("library.infinite")}
             </button>
           </div>
         </div>
       </div>
-      <section className="panel filters" aria-label="Library filters">
+      <section className="panel filters" aria-label={t("library.libraryFilters")}>
         <form
           className="search-form"
           onSubmit={(event) => {
@@ -211,51 +227,51 @@ export default function Library() {
           }}
         >
           <label className="grow">
-            Search
+            {t("library.search")}
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={"Title, path, tag…"}
+              placeholder={t("library.titlePathTag")}
             />
           </label>
-          <button className="primary">Search</button>
+          <button className="primary">{t("library.search")}</button>
         </form>
         <div className="toolbar">
           <label>
-            Root
+            {t("library.root")}
             <select
               value={search.root}
               onChange={(e) => update({ root: e.target.value, folder: "" })}
             >
-              <option value="">All accessible roots</option>
+              <option value="">{t("library.allAccessibleRoots")}</option>
               {roots.data?.map((root) => (
                 <option key={root.id} value={root.id}>
-                  {root.name} · {root.status}
+                  {root.name} · {statusLabel(root.status, t)}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            Sort
+            {t("library.sort")}
             <select value={search.sort} onChange={(e) => update({ sort: e.target.value })}>
-              <option value="recent">Recently indexed</option>
-              <option value="title">Title</option>
-              <option value="mtime">File modified</option>
+              <option value="recent">{t("library.recentlyIndexed")}</option>
+              <option value="title">{t("library.title")}</option>
+              <option value="mtime">{t("library.fileModified")}</option>
             </select>
           </label>
           <label>
-            Direction
+            {t("library.direction")}
             <select
               value={search.direction}
               onChange={(e) => update({ direction: e.target.value })}
             >
-              <option value="desc">Descending</option>
-              <option value="asc">Ascending</option>
+              <option value="desc">{t("library.descending")}</option>
+              <option value="asc">{t("library.ascending")}</option>
             </select>
           </label>
           <label>
-            Page size
+            {t("library.pageSize")}
             <select
               value={search.limit}
               onChange={(e) => update({ limit: Number(e.target.value) })}
@@ -267,12 +283,9 @@ export default function Library() {
           </label>
         </div>
         <details>
-          <summary>Search syntax & saved searches</summary>
+          <summary>{t("library.searchSyntaxSavedSearches")}</summary>
           <p className="small muted">
-            Combine AND, OR, NOT and parentheses. Use quoted phrases, title:, path:, root:,
-            tag:namespace:value, word: or substring:. One–two character terms match indexed
-            prefixes/exact values; longer terms match substrings. Only accessible root paths are
-            searched.
+            {t("library.combineAndOrNotAndParenthesesUseQuotedPhrases")}
           </p>
           <div className="chips">
             {saved.data?.map((item) => (
@@ -281,7 +294,7 @@ export default function Library() {
                   {item.name}
                 </button>
                 <button
-                  aria-label={`Delete ${item.name}`}
+                  aria-label={t("library.deleteSearch", { name: item.name })}
                   onClick={() =>
                     action.mutate({
                       path: `/saved-searches/${encoded(item.id)}`,
@@ -296,14 +309,14 @@ export default function Library() {
           </div>
           <form className="inline" onSubmit={save}>
             <input
-              aria-label="Saved search name"
+              aria-label={t("library.savedSearchName")}
               value={savedName}
               onChange={(e) => setSavedName(e.target.value)}
-              placeholder="Name this search"
+              placeholder={t("library.nameThisSearch")}
               required
               maxLength={100}
             />
-            <button disabled={action.isPending}>Save current search</button>
+            <button disabled={action.isPending}>{t("library.saveCurrentSearch")}</button>
           </form>
         </details>
       </section>
@@ -312,7 +325,7 @@ export default function Library() {
         search.root ? (
           <FolderBrowser search={search} roots={roots.data || []} update={update} />
         ) : (
-          <section className="card-grid" aria-label="Roots">
+          <section className="card-grid" aria-label={t("library.roots")}>
             {roots.data?.map((root) => (
               <Link
                 key={root.id}
@@ -332,13 +345,14 @@ export default function Library() {
   );
 }
 function FolderCard({ folder, search }: { folder: Folder; search: LibrarySearch }) {
+  const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   return (
     <Link className="folder-card" to="/" search={{ ...search, folder: folder.path, page: 1 }}>
       <div className="cover">
         {failed ? (
-          <span className="cover-placeholder" aria-label="Cover unavailable">
-            ▧<small>No preview</small>
+          <span className="cover-placeholder" aria-label={t("library.coverUnavailable")}>
+            ▧<small>{t("library.noPreview")}</small>
           </span>
         ) : (
           <img
@@ -349,12 +363,10 @@ function FolderCard({ folder, search }: { folder: Folder; search: LibrarySearch 
             onError={() => setFailed(true)}
           />
         )}
-        <span className="folder-badge">Folder</span>
+        <span className="folder-badge">{t("folders.folder")}</span>
       </div>
       <h3>{folder.name}</h3>
-      <p>
-        {folder.works} {folder.works === 1 ? "work" : "works"}
-      </p>
+      <p>{t("common.workCount", { count: folder.works })}</p>
     </Link>
   );
 }
@@ -367,6 +379,7 @@ function FolderBrowser({
   roots: Root[];
   update: (patch: Partial<LibrarySearch>) => void;
 }) {
+  const { t } = useTranslation();
   const params = new URLSearchParams({ root: search.root, path: search.folder });
   const result = useAPI<FolderListing>(
     ["folders", search.root, search.folder],
@@ -380,10 +393,10 @@ function FolderBrowser({
       {result.isPending && <Pending />}
       {listing && (
         <>
-          <nav className="folder-path" aria-label="Folder path">
+          <nav className="folder-path" aria-label={t("folders.folderPath")}>
             {roots.length > 1 && (
               <Link to="/" search={{ ...search, root: "", folder: "", page: 1 }}>
-                All roots
+                {t("folders.allRoots")}
               </Link>
             )}
             {segments.length ? (
@@ -410,7 +423,7 @@ function FolderBrowser({
             )}
           </nav>
           {listing.folders.length > 0 && (
-            <section className="card-grid folder-grid" aria-label="Folders">
+            <section className="card-grid folder-grid" aria-label={t("library.folders")}>
               {listing.folders.map((folder) => (
                 <FolderCard key={folder.path} folder={folder} search={search} />
               ))}
@@ -450,6 +463,7 @@ function PagedLibrary({
   search: LibrarySearch;
   update: (patch: Partial<LibrarySearch>) => void;
 }) {
+  const { t, i18n } = useTranslation();
   const key = JSON.stringify(search),
     result = useAPI<WorksPage>(["works", search], workPath(search, search.page));
   useLayoutEffect(() => {
@@ -471,7 +485,10 @@ function PagedLibrary({
         result.data && (
           <>
             <div className="results-count" role="status">
-              {result.data.total.toLocaleString()} works · page {search.page}
+              {t("library.results", {
+                countText: result.data.total.toLocaleString(i18n.language),
+                page: search.page,
+              })}
             </div>
             <div className="card-grid">
               {result.data.items.map((work) => (
@@ -480,13 +497,13 @@ function PagedLibrary({
             </div>
             {!result.data.items.length && !hideEmpty && (
               <div className="empty">
-                <h2>No matching works</h2>
-                <p>Change the search or ask an administrator to explicitly scan an online root.</p>
+                <h2>{t("library.noMatchingWorks")}</h2>
+                <p>{t("library.changeTheSearchOrAskAnAdministratorToExplicitly")}</p>
               </div>
             )}
-            <nav className="pagination" aria-label="Pages">
+            <nav className="pagination" aria-label={t("library.pages")}>
               <button disabled={search.page <= 1} onClick={() => update({ page: search.page - 1 })}>
-                ← Previous
+                {t("library.previous")}
               </button>
               <form
                 className="inline"
@@ -498,7 +515,7 @@ function PagedLibrary({
                 }}
               >
                 <label>
-                  Page
+                  {t("library.page")}
                   <input
                     key={search.page}
                     name="page"
@@ -509,13 +526,13 @@ function PagedLibrary({
                   />
                 </label>
                 <span>/ {Math.max(1, Math.ceil(result.data.total / search.limit))}</span>
-                <button>Go</button>
+                <button>{t("library.go")}</button>
               </form>
               <button
                 disabled={search.page * search.limit >= result.data.total}
                 onClick={() => update({ page: search.page + 1 })}
               >
-                Next →
+                {t("library.next")}
               </button>
             </nav>
           </>
@@ -525,6 +542,7 @@ function PagedLibrary({
   );
 }
 function InfiniteLibrary({ search }: { search: LibrarySearch }) {
+  const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const container = useRef<HTMLDivElement>(null),
     [columns, setColumns] = useState(4),
@@ -633,18 +651,19 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
     <>
       <ErrorNotice error={result.error} />
       <div className="results-count">
-        {result.data?.pages[0]?.total.toLocaleString() ?? "…"} works · up to five result pages
-        retained
+        {t("library.infiniteResults", {
+          countText: result.data?.pages[0]?.total.toLocaleString(i18n.language) ?? "…",
+        })}
       </div>
       <div className="toolbar">
         <button
           disabled={!result.hasPreviousPage || result.isFetching}
           onClick={() => result.fetchPreviousPage()}
         >
-          Load earlier results
+          {t("library.loadEarlierResults")}
         </button>
         <button disabled={result.isFetching} onClick={refresh}>
-          Refresh results
+          {t("library.refreshResults")}
         </button>
       </div>
       <div
@@ -652,7 +671,7 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
         ref={container}
         onScroll={saveScroll}
         tabIndex={0}
-        aria-label="Scrollable library results"
+        aria-label={t("library.scrollableLibraryResults")}
       >
         <VirtualLibraryRows
           container={container}
@@ -671,7 +690,11 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
         disabled={!result.hasNextPage || result.isFetching}
         onClick={() => result.fetchNextPage()}
       >
-        {result.isFetching ? "Loading…" : result.hasNextPage ? "Load more" : "End of results"}
+        {result.isFetching
+          ? t("auth.loading")
+          : result.hasNextPage
+            ? t("library.loadMore")
+            : t("library.endOfResults")}
       </button>
     </>
   );

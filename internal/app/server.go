@@ -88,7 +88,7 @@ func (a *App) Handler() http.Handler {
 			files.ServeHTTP(w, r)
 			return
 		}
-		if p != "/" && p != "/login" && p != "/admin" && !strings.HasPrefix(p, "/read/") {
+		if p != "/" && p != "/login" && p != "/admin" && p != "/account" && !strings.HasPrefix(p, "/read/") {
 			http.NotFound(w, r)
 			return
 		}

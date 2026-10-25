@@ -1,3 +1,5 @@
+import i18n, { applyLanguage, isErrorCode } from "./i18n.ts";
+import { useTranslation } from "react-i18next";
 import type { ReactNode, FormEvent } from "react";
 import type { QueryClient, QueryKey, UseQueryOptions } from "@tanstack/react-query";
 import type { User, Preferences } from "./types.ts";
@@ -11,13 +13,17 @@ const authClients = new Set<QueryClient>();
 export class APIError extends Error {
   status: number;
   code?: string;
-  constructor(status: number, body: unknown) {
+  constructor(
+    status: number,
+    body: unknown,
+    fallback: string = i18n.t("common.requestFailed", { status }),
+  ) {
     const error = body && typeof body === "object" && "error" in body ? body.error : null;
     const message =
       error && typeof error === "object" && "message" in error && typeof error.message === "string"
         ? error.message
         : undefined;
-    super(message || `Request failed (${status})`);
+    super(message || fallback);
     this.status = status;
     this.code =
       error && typeof error === "object" && "code" in error && typeof error.code === "string"
@@ -53,7 +59,6 @@ export async function api<T = unknown>(
     }
     throw error;
   }
-  // The caller supplies the response contract from the Go handler.
   return value as T;
 }
 export const encoded = encodeURIComponent;
@@ -78,13 +83,21 @@ export function useAction<T = unknown, TBody = unknown>() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ path, method = "POST", body }: ActionVariables<TBody>) =>
-      api<T>(path, { method, body: body === undefined ? {} : body }),
+      api<T>(path, {
+        method,
+        body:
+          path === "/preferences" && body && typeof body === "object"
+            ? { ...client.getQueryData<User>(["me"])?.preferences, ...body }
+            : body === undefined
+              ? {}
+              : body,
+      }),
     onSuccess: (_, variables) => {
       if (variables.path === "/preferences")
         client.setQueryData<Partial<User>>(["me"], (user) => ({
           ...user,
           // Only the preferences form sends this endpoint's validated payload.
-          preferences: variables.body as Preferences,
+          preferences: { ...user?.preferences, ...(variables.body as Preferences) },
         }));
       if (variables.invalidate !== undefined)
         return Promise.all(
@@ -96,7 +109,20 @@ export function useAction<T = unknown, TBody = unknown>() {
     },
   });
 }
+const detailedErrors = new Set([
+  "invalid_query",
+  "invalid_config",
+  "invalid_regex",
+  "invalid_manifest",
+  "invalid_metadata",
+  "invalid_field",
+  "invalid_request",
+  "invalid_executable",
+  "invalid_job",
+  "invalid_root",
+]);
 export function ErrorNotice({ error }: { error: unknown }) {
+  const { t, i18n } = useTranslation();
   const code =
     error && typeof error === "object" && "code" in error && typeof error.code === "string"
       ? error.code
@@ -106,6 +132,13 @@ export function ErrorNotice({ error }: { error: unknown }) {
       ? error.message
       : undefined;
   const fallback = String(error);
+  if (error instanceof APIError && i18n.resolvedLanguage === "ko" && code && isErrorCode(code))
+    return (
+      <p className="notice error" role="alert" title={code}>
+        {t(`errors.${code}`)}
+        {detailedErrors.has(code) ? ` (${message || fallback})` : ""}
+      </p>
+    );
   return error ? (
     <p className="notice error" role="alert">
       {Boolean(code) && <strong>{String(code)}: </strong>}
@@ -113,20 +146,22 @@ export function ErrorNotice({ error }: { error: unknown }) {
     </p>
   ) : null;
 }
-export function Pending({ children = "Loading…" }: { children?: ReactNode }) {
+export function Pending({ children }: { children?: ReactNode }) {
+  const { t } = useTranslation();
   return (
     <p className="muted" role="status">
-      {children}
+      {children ?? t("auth.loading")}
     </p>
   );
 }
 const AuthContext = createContext<{ user: User; logout: () => Promise<void> } | null>(null);
 export function useAuth() {
   const auth = useContext(AuthContext);
-  if (!auth) throw new Error("Auth provider required");
+  if (!auth) throw new Error(i18n.t("auth.authProviderRequired"));
   return auth;
 }
 export function Auth({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const client = useQueryClient();
   useEffect(() => {
     authClients.add(client);
@@ -136,7 +171,10 @@ export function Auth({ children }: { children: ReactNode }) {
   }, [client]);
   const me = useAPI<User | null>(["me"], "/auth/me", { retry: false, staleTime: 60_000 });
   useEffect(() => {
-    if (me.data) setCsrf(me.data.csrf || "");
+    if (me.data) {
+      setCsrf(me.data.csrf || "");
+      applyLanguage(me.data.preferences?.language);
+    }
   }, [me.data]);
   if (me.isPending)
     return (
@@ -170,8 +208,8 @@ export function Auth({ children }: { children: ReactNode }) {
       {me.data.must_change_password ? (
         <main className="login">
           <div className="panel">
-            <h1>Change password</h1>
-            <p>Choose a new password to continue.</p>
+            <h1>{t("nav.changePassword")}</h1>
+            <p>{t("auth.chooseANewPasswordToContinue")}</p>
             <ChangePassword />
           </div>
         </main>
@@ -182,6 +220,7 @@ export function Auth({ children }: { children: ReactNode }) {
   );
 }
 function Login({ error, onLogin }: { error: unknown; onLogin: (user: User) => void }) {
+  const { t } = useTranslation();
   const [failure, setFailure] = useState<unknown>(null),
     [busy, setBusy] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -205,28 +244,27 @@ function Login({ error, onLogin }: { error: unknown; onLogin: (user: User) => vo
   return (
     <main className="login">
       <div className="panel">
-        <div className="eyebrow">YOUR READ-ONLY IMAGE LIBRARY</div>
+        <div className="eyebrow">{t("auth.yourReadOnlyImageLibrary")}</div>
         <h1>
           ARChika<span className="accent">.</span>
         </h1>
-        <p>Welcome back. Open your library.</p>
+        <p>{t("auth.welcomeBackOpenYourLibrary")}</p>
         <form onSubmit={submit}>
           <label>
-            Username
+            {t("auth.username")}
             <input name="name" autoComplete="username" required autoFocus />
           </label>
           <label>
-            Password
+            {t("auth.password")}
             <input name="password" type="password" autoComplete="current-password" required />
           </label>
           <button className="primary" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
+            {busy ? t("auth.signingIn") : t("auth.signIn")}
           </button>
         </form>
         <ErrorNotice error={failure || error} />
         <p className="muted small">
-          First installation? Find the one-time administrator password in the server logs, unless
-          you configured an initial password.
+          {t("auth.firstInstallationFindTheOneTimeAdministratorPasswordIn")}
         </p>
       </div>
     </main>
@@ -234,6 +272,7 @@ function Login({ error, onLogin }: { error: unknown; onLogin: (user: User) => vo
 }
 
 export function ChangePassword() {
+  const { t } = useTranslation();
   const client = useQueryClient();
   const [failure, setFailure] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -247,11 +286,11 @@ export function ChangePassword() {
     setSaved(false);
     setFailure(null);
     if (new TextEncoder().encode(password).length < 12) {
-      setFailure(new Error("Use at least 12 bytes for the new password."));
+      setFailure(new Error(t("auth.useAtLeast12BytesForTheNewPassword")));
       return;
     }
     if (password !== data.get("confirm_password")) {
-      setFailure(new Error("New passwords must match."));
+      setFailure(new Error(t("auth.newPasswordsMustMatch")));
       return;
     }
     setBusy(true);
@@ -272,11 +311,11 @@ export function ChangePassword() {
   return (
     <form onSubmit={submit}>
       <label>
-        Current password
+        {t("auth.currentPassword")}
         <input name="current_password" type="password" autoComplete="current-password" required />
       </label>
       <label>
-        New password
+        {t("auth.newPassword")}
         <input
           name="new_password"
           type="password"
@@ -286,7 +325,7 @@ export function ChangePassword() {
         />
       </label>
       <label>
-        Confirm new password
+        {t("auth.confirmNewPassword")}
         <input
           name="confirm_password"
           type="password"
@@ -296,10 +335,10 @@ export function ChangePassword() {
         />
       </label>
       <button className="primary" disabled={busy}>
-        {busy ? "Saving…" : "Change password"}
+        {busy ? t("auth.saving") : t("nav.changePassword")}
       </button>
       <ErrorNotice error={failure} />
-      {saved && <p role="status">Password changed. Other sessions have been signed out.</p>}
+      {saved && <p role="status">{t("auth.passwordChangedOtherSessionsHaveBeenSignedOut")}</p>}
     </form>
   );
 }

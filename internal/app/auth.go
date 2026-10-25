@@ -271,6 +271,11 @@ func (a *App) preferences(w http.ResponseWriter, r *http.Request, u User) {
 	}
 	for k, v := range in {
 		switch k {
+		case "language":
+			if v != "" && v != "en" && v != "ko" {
+				apiError(w, 400, "invalid_preference", "Invalid language")
+				return
+			}
 		case "reader_mode":
 			if v != "paged" && v != "scroll" {
 				apiError(w, 400, "invalid_preference", "Invalid reader mode")

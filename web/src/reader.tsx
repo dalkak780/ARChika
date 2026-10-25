@@ -1,3 +1,5 @@
+import i18n from "./i18n.ts";
+import { useTranslation } from "react-i18next";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import type { Page, WorkDetail, LibrarySearch } from "./types.ts";
 import type { Dimensions, GesturePoint, NavigationAction } from "./navigation.ts";
@@ -69,6 +71,21 @@ const route = getRouteApi("/read/$workId");
 function isBrowserFullscreen() {
   return !!document.fullscreenElement || window.matchMedia("(display-mode: fullscreen)").matches;
 }
+function readAutoNext() {
+  try {
+    return sessionStorage.getItem("reader-auto") === "1";
+  } catch {
+    return false;
+  }
+}
+function saveAutoNext(enabled: boolean) {
+  try {
+    if (enabled) sessionStorage.setItem("reader-auto", "1");
+    else sessionStorage.removeItem("reader-auto");
+  } catch {
+    // Continue reading when browser storage is unavailable.
+  }
+}
 const positions = new Map<string, number>();
 const readerId =
   globalThis.crypto.randomUUID?.() ||
@@ -85,9 +102,10 @@ function DelayedSpinner() {
   return visible ? <span className="reader-spinner" aria-hidden="true" /> : null;
 }
 function ReaderBackdrop({ workId }: { workId: string }) {
+  const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   return (
-    <div className="reader-backdrop" aria-busy="true" aria-label="Loading reader">
+    <div className="reader-backdrop" aria-busy="true" aria-label={t("reader.loadingReader")}>
       {!failed && <img src={thumbnailURL(workId)} alt="" onError={() => setFailed(true)} />}
       <DelayedSpinner />
     </div>
@@ -121,9 +139,7 @@ async function decodedPage(workId: string, page: Page, width: number, signal: Ab
       if (forcePNG || image.compatible) break;
     }
   }
-  throw new Error(
-    "This page could not be decoded, including its compatible representation. Other pages remain available.",
-  );
+  throw new Error(i18n.t("reader.thisPageCouldNotBeDecodedIncludingItsCompatible"));
 }
 function PageImage({
   workId,
@@ -133,6 +149,7 @@ function PageImage({
   className = "",
   onLoaded,
 }: PageImageProps) {
+  const { t } = useTranslation();
   const [display, setDisplay] = useState<{
     image: CachedPage;
     page: Page;
@@ -207,7 +224,10 @@ function PageImage({
       {error ? (
         <div className="page-error">
           <ErrorNotice error={error} />
-          <button onClick={() => setRetry((n) => n + 1)}>Retry page {page.ordinal + 1}</button>
+          <button onClick={() => setRetry((n) => n + 1)}>
+            {t("reader.retryPage")}
+            {page.ordinal + 1}
+          </button>
         </div>
       ) : (
         <>
@@ -215,7 +235,7 @@ function PageImage({
             <>
               <img
                 src={image.image.url}
-                alt={`Page ${image.page.ordinal + 1}`}
+                alt={t("reader.pageNumber", { page: image.page.ordinal + 1 })}
                 draggable="false"
                 onLoad={(event) => {
                   onDimensions(
@@ -227,7 +247,7 @@ function PageImage({
               />
               {image.image.fallback && (
                 <figcaption>
-                  Still-frame compatibility representation; animation is not preserved.
+                  {t("reader.stillFrameCompatibilityRepresentationAnimationIsNotPreserved")}
                 </figcaption>
               )}
             </>
@@ -239,6 +259,7 @@ function PageImage({
   );
 }
 export default function Reader() {
+  const { t, i18n } = useTranslation();
   const { workId } = route.useParams(),
     search = route.useSearch(),
     searchStr = useLocation({ select: (location) => location.searchStr }),
@@ -281,7 +302,7 @@ export default function Reader() {
   );
   const [preloadCount, setPreloadCount] = useState(user.preferences?.preload_count ?? 2);
   const [autoSeconds, setAutoSeconds] = useState(user.preferences?.auto_next_seconds ?? 10);
-  const [auto, setAuto] = useState(() => sessionStorage.getItem("reader-auto") === "1");
+  const [auto, setAuto] = useState(readAutoNext);
   const [remaining, setRemaining] = useState(autoSeconds);
   const [overlay, setOverlay] = useState<"overview" | "options" | "help" | null>(null);
   const [editingPage, setEditingPage] = useState(false);
@@ -318,7 +339,7 @@ export default function Reader() {
     return () => document.removeEventListener("visibilitychange", changed);
   }, []);
   useEffect(() => {
-    sessionStorage.removeItem("reader-auto");
+    saveAutoNext(false);
   }, [workId]);
   const [chrome, setChrome] = useState(true),
     [metadata, setMetadata] = useState(false),
@@ -439,8 +460,7 @@ export default function Reader() {
     trimOldest(libraryOrigins, 64);
     setAuto(resume);
     resetCountdown();
-    if (resume) sessionStorage.setItem("reader-auto", "1");
-    else sessionStorage.removeItem("reader-auto");
+    saveAutoNext(resume);
     void navigate({
       to: "/read/$workId",
       params: { workId: neighbor.id },
@@ -512,7 +532,7 @@ export default function Reader() {
     else if (neighbors.data?.next) openWork(neighbors.data.next, true);
     else {
       setAuto(false);
-      sessionStorage.removeItem("reader-auto");
+      saveAutoNext(false);
     }
   });
   const countdownKey = `${workId}:${pageIndex}:${autoSeconds}`;
@@ -718,30 +738,34 @@ export default function Reader() {
     >
       <header className="reader-toolbar">
         <div className="toolbar reader-main-toolbar">
-          <IconButton icon="close" label="Close reader" onClick={backToLibrary} />
-          <strong className="reader-title" title={work?.title || "Reader"}>
-            {work?.title || "Reader"}
+          <IconButton icon="close" label={t("reader.closeReader")} onClick={backToLibrary} />
+          <strong className="reader-title" title={work?.title || t("reader.reader")}>
+            {work?.title || t("reader.reader")}
           </strong>
           <IconButton
             icon={fullscreenView ? "exitFullscreen" : "fullscreen"}
-            label={fullscreenView ? "Exit fullscreen (F)" : "Fullscreen (F)"}
+            label={fullscreenView ? t("reader.exitFullscreenF") : t("reader.fullscreenF")}
             onClick={() => void fullscreen()}
           />
           <IconButton
             icon="overview"
-            label="Page overview (Q)"
+            label={t("reader.pageOverviewQ")}
             onClick={() => setOverlay("overview")}
           />
           <IconButton
             icon="settings"
-            label="Reader options (O)"
+            label={t("reader.readerOptionsO")}
             onClick={() => setOverlay("options")}
           />
-          <IconButton icon="help" label="Reader help (?)" onClick={() => setOverlay("help")} />
+          <IconButton
+            icon="help"
+            label={t("reader.readerHelp")}
+            onClick={() => setOverlay("help")}
+          />
           <IconButton
             icon="favorite"
             className={favorite ? "primary" : ""}
-            label={favorite ? "Remove favorite" : "Add favorite"}
+            label={favorite ? t("library.removeFavorite") : t("library.addFavorite")}
             aria-pressed={favorite}
             disabled={!work || action.isPending}
             onClick={() =>
@@ -753,34 +777,38 @@ export default function Reader() {
               })
             }
           />
-          <IconButton icon="metadata" label="Work metadata" onClick={() => setMetadata(true)} />
+          <IconButton
+            icon="metadata"
+            label={t("reader.workMetadata")}
+            onClick={() => setMetadata(true)}
+          />
         </div>
       </header>
       {overlay === "options" && (
-        <ReaderPanel title="Reader options" close={() => setOverlay(null)}>
+        <ReaderPanel title={t("reader.readerOptions")} close={() => setOverlay(null)}>
           <div className="reader-settings">
             <label>
-              Mode
+              {t("reader.mode")}
               <select
                 value={mode}
                 onChange={(e) => setMode(e.target.value === "scroll" ? "scroll" : "paged")}
               >
-                <option value="paged">Paged</option>
-                <option value="scroll">Continuous</option>
+                <option value="paged">{t("reader.paged")}</option>
+                <option value="scroll">{t("reader.continuous")}</option>
               </select>
             </label>
             <label>
-              Layout
+              {t("reader.layout")}
               <select
                 value={layout}
                 onChange={(e) => setLayout(e.target.value === "spread" ? "spread" : "single")}
               >
-                <option value="single">Single</option>
-                <option value="spread">Two-page spread</option>
+                <option value="single">{t("reader.single")}</option>
+                <option value="spread">{t("reader.twoPageSpread")}</option>
               </select>
             </label>
             <label>
-              Fit
+              {t("reader.fit")}
               <select
                 value={fit}
                 onChange={(e) =>
@@ -795,14 +823,14 @@ export default function Reader() {
                   )
                 }
               >
-                <option value="viewport">Viewport</option>
-                <option value="width">Width</option>
-                <option value="height">Height</option>
-                <option value="original">Original</option>
+                <option value="viewport">{t("reader.viewport")}</option>
+                <option value="width">{t("reader.width")}</option>
+                <option value="height">{t("reader.height")}</option>
+                <option value="original">{t("reader.original")}</option>
               </select>
             </label>
             <label>
-              Zoom
+              {t("reader.zoom")}
               <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
                 {[0.75, 1, 1.25, 1.5, 2, 3].map((value) => (
                   <option key={value} value={value}>
@@ -812,31 +840,32 @@ export default function Reader() {
               </select>
             </label>
             <label>
-              Resize
+              {t("reader.resize")}
               <select value={resize} onChange={(e) => setResize(Number(e.target.value))}>
-                <option value="0">Original dimensions</option>
+                <option value="0">{t("reader.originalDimensions")}</option>
                 {[800, 1200, 1600, 2400].map((value) => (
                   <option key={value} value={value}>
-                    {value}px wide
+                    {value}
+                    {t("reader.pxWide")}
                   </option>
                 ))}
               </select>
             </label>
 
             <label>
-              Reading direction
+              {t("reader.readingDirection")}
               <select
                 value={readingDirection}
                 onChange={(event) =>
                   setReadingDirection(event.target.value === "rtl" ? "rtl" : "ltr")
                 }
               >
-                <option value="ltr">Left to right</option>
-                <option value="rtl">Right to left</option>
+                <option value="ltr">{t("reader.leftToRight")}</option>
+                <option value="rtl">{t("reader.rightToLeft")}</option>
               </select>
             </label>
             <label>
-              Preload pages
+              {t("reader.preloadPages")}
               <input
                 type="number"
                 min={0}
@@ -849,7 +878,7 @@ export default function Reader() {
               />
             </label>
             <label>
-              Auto-next interval (seconds)
+              {t("reader.autoNextIntervalSeconds")}
               <input
                 type="number"
                 min={2}
@@ -864,8 +893,8 @@ export default function Reader() {
           </div>
           <p className="muted small reader-options-status" role="status">
             {preferenceAction.isPending
-              ? "Saving preferences…"
-              : "Preferences save automatically. Zoom applies to this session."}
+              ? t("reader.savingPreferences")
+              : t("reader.preferencesSaveAutomaticallyZoomAppliesToThisSession")}
           </p>
           <ErrorNotice error={preferenceAction.error} />
           {currentPage && (
@@ -874,15 +903,15 @@ export default function Reader() {
               target="_blank"
               rel="noreferrer"
             >
-              Open original
+              {t("reader.openOriginal")}
             </a>
           )}
         </ReaderPanel>
       )}
       {overlay === "overview" && (
-        <ReaderPanel title="Page overview" close={() => setOverlay(null)}>
+        <ReaderPanel title={t("reader.pageOverview")} close={() => setOverlay(null)}>
           <button disabled={action.isPending} onClick={() => cover("")}>
-            Reset cover
+            {t("reader.resetCover")}
           </button>
           <ErrorNotice error={action.error} />
           <VirtualPageOverview
@@ -892,7 +921,7 @@ export default function Reader() {
               <div className={`overview-tile ${index === pageIndex ? "current" : ""}`}>
                 <button
                   className="thumbnail-button"
-                  aria-label={`Go to page ${index + 1}`}
+                  aria-label={t("reader.goToPageNumber", { page: index + 1 })}
                   aria-current={index === pageIndex ? "page" : undefined}
                   onClick={() => {
                     jump(index);
@@ -906,9 +935,9 @@ export default function Reader() {
                   className="cover-button"
                   disabled={action.isPending}
                   onClick={() => cover(page.entry_id)}
-                  aria-label={`Use page ${index + 1} as cover`}
+                  aria-label={t("reader.usePageAsCover", { page: index + 1 })}
                 >
-                  Use as cover
+                  {t("reader.useAsCover")}
                 </button>
               </div>
             )}
@@ -916,52 +945,42 @@ export default function Reader() {
         </ReaderPanel>
       )}
       {overlay === "help" && (
-        <ReaderPanel title="Reader help" close={() => setOverlay(null)}>
+        <ReaderPanel title={t("reader.readerHelpText")} close={() => setOverlay(null)}>
           <dl className="reader-shortcuts">
             <dt>← / →, A / D</dt>
-            <dd>Previous / next page. Reversed in right-to-left mode.</dd>
+            <dd>{t("reader.previousNextPageReversedInRightToLeftMode")}</dd>
             <dt>Space / Shift+Space</dt>
-            <dd>Next / previous page.</dd>
+            <dd>{t("reader.nextPreviousPage")}</dd>
             <dt>Home / End</dt>
-            <dd>
-              First / last page. Shift+← / Shift+→ also jump to the ends, reversed in right-to-left
-              mode.
-            </dd>
+            <dd>{t("reader.firstLastPageShiftShiftAlsoJumpToThe")}</dd>
             <dt>G</dt>
-            <dd>Go to page. Enter jumps; Escape cancels.</dd>
+            <dd>{t("reader.goToPageEnterJumpsEscapeCancels")}</dd>
             <dt>F / P / M / N</dt>
-            <dd>Fullscreen / single or spread / reading direction / auto-next.</dd>
+            <dd>{t("reader.fullscreenSingleOrSpreadReadingDirectionAutoNext")}</dd>
             <dt>Q / O / ?</dt>
-            <dd>Overview / options / help. Escape or a click outside closes a panel.</dd>
+            <dd>{t("reader.overviewOptionsHelpEscapeOrAClickOutsideCloses")}</dd>
             <dt>, / .</dt>
-            <dd>Previous / next work in the library search.</dd>
+            <dd>{t("reader.previousNextWorkInTheLibrarySearch")}</dd>
             <dt>Backspace</dt>
-            <dd>Return to the library.</dd>
+            <dd>{t("reader.returnToTheLibrary")}</dd>
           </dl>
-          <p>
-            Tap the left or right edge to turn pages; tap the centre to show or hide fullscreen
-            controls. Swipe horizontally to turn pages. Edges and swipes reverse in right-to-left
-            mode. Continuous reading keeps native scrolling. Shortcuts are ignored while typing.
-          </p>
-          <p>
-            Auto-next pauses while a panel is open or this tab is hidden. It continues to the next
-            work when available.
-          </p>
+          <p>{t("reader.tapTheLeftOrRightEdgeToTurnPages")}</p>
+          <p>{t("reader.autoNextPausesWhileAPanelIsOpenOr")}</p>
         </ReaderPanel>
       )}
       <button
         className="reveal-chrome"
         onClick={() => setChrome((value) => !value)}
-        aria-label={chrome ? "Hide controls" : "Show reader controls"}
+        aria-label={chrome ? t("reader.hideControls") : t("reader.showReaderControls")}
       >
-        {chrome ? "Hide controls" : "☰ Controls / Exit"}
+        {chrome ? t("reader.hideControls") : t("reader.controls")}
       </button>
       <ErrorNotice
         error={result.error || action.error || preferenceAction.error || neighbors.error}
       />
       {result.isPending && <ReaderBackdrop key={workId} workId={workId} />}
       {metadata && (
-        <ReaderPanel title="Work metadata" close={() => setMetadata(false)}>
+        <ReaderPanel title={t("reader.workMetadata")} close={() => setMetadata(false)}>
           <WorkMetadata workId={workId} />
         </ReaderPanel>
       )}
@@ -974,7 +993,7 @@ export default function Reader() {
             })
           }
         >
-          Retry page indexing
+          {t("reader.retryPageIndexing")}
         </button>
       )}
       {pages.length ? (
@@ -1035,25 +1054,25 @@ export default function Reader() {
           <footer className="reader-footer">
             <nav
               className="reader-navigation"
-              aria-label="Page navigation"
+              aria-label={t("reader.pageNavigation")}
               dir={mode === "paged" ? readingDirection : "ltr"}
             >
               {neighbors.data?.previous && (
                 <IconButton
                   icon="previousWork"
-                  label={`Previous work: ${neighbors.data.previous.title} (,)`}
+                  label={t("reader.previousWork", { title: neighbors.data.previous.title })}
                   onClick={() => openWork(neighbors.data?.previous)}
                 />
               )}
               <IconButton
                 icon="first"
-                label="First page (Home)"
+                label={t("reader.firstPageHome")}
                 disabled={pageIndex === 0}
                 onClick={() => go("home")}
               />
               <IconButton
                 icon="previous"
-                label="Previous page"
+                label={t("reader.previousPage")}
                 disabled={pageIndex === 0}
                 onClick={() => go("previous")}
               />
@@ -1066,20 +1085,20 @@ export default function Reader() {
               />
               <IconButton
                 icon="next"
-                label="Next page"
+                label={t("reader.nextPage")}
                 disabled={(mode === "paged" ? lastShown : pageIndex) >= pages.length - 1}
                 onClick={() => go("next")}
               />
               <IconButton
                 icon="last"
-                label="Last page (End)"
+                label={t("reader.lastPageEnd")}
                 disabled={(mode === "paged" ? lastShown : pageIndex) >= pages.length - 1}
                 onClick={() => go("end")}
               />
               {neighbors.data?.next && (
                 <IconButton
                   icon="nextWork"
-                  label={`Next work: ${neighbors.data.next.title} (.)`}
+                  label={t("reader.nextWork", { title: neighbors.data.next.title })}
                   onClick={() => openWork(neighbors.data?.next)}
                 />
               )}
@@ -1090,25 +1109,27 @@ export default function Reader() {
                 {currentPage?.width && currentPage.height
                   ? ` · ${currentPage.width} × ${currentPage.height}`
                   : ""}
-                {cachedPage ? ` · ${(cachedPage.blob.size / 1024).toFixed(1)} KiB` : ""}
+                {cachedPage
+                  ? ` · ${(cachedPage.blob.size / 1024).toLocaleString(i18n.language, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false })} KiB`
+                  : ""}
               </small>
               <IconButton
                 icon={auto ? "pause" : "play"}
-                label={auto ? "Pause auto-next (N)" : "Start auto-next (N)"}
+                label={auto ? t("reader.pauseAutoNextN") : t("reader.startAutoNextN")}
                 aria-pressed={auto}
                 onClick={() => {
                   resetCountdown();
                   setAuto((value) => !value);
                 }}
               >
-                {auto ? `${remaining}s` : null}
+                {auto ? t("reader.seconds", { count: remaining }) : null}
               </IconButton>
             </div>
           </footer>
         </>
       ) : (
         !result.isPending &&
-        !result.error && <div className="empty">This work has no readable pages.</div>
+        !result.error && <div className="empty">{t("reader.thisWorkHasNoReadablePages")}</div>
       )}
     </main>
   );

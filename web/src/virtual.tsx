@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import type { Page, Work } from "./types.ts";
 import React, { Fragment, useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
@@ -94,6 +95,7 @@ export function VirtualContinuousPages({
 }) {
   // TanStack Virtual exposes mutable methods that React Compiler cannot safely memoize.
   "use no memo";
+  const { t } = useTranslation();
   const programmatic = useRef(false),
     lastReported = useRef(index);
   const virtual = useVirtualizer({
@@ -150,7 +152,7 @@ export function VirtualContinuousPages({
       onPointerCancel={pointerCancel}
       onLostPointerCapture={pointerCancel}
       tabIndex={0}
-      aria-label="Continuous reading surface"
+      aria-label={t("reader.continuousReadingSurface")}
     >
       <div
         style={{

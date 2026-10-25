@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Page } from "./types.ts";
@@ -12,6 +13,7 @@ export function ReaderPanel({
   close: () => void;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
     const opener = document.activeElement;
@@ -45,7 +47,7 @@ export function ReaderPanel({
     >
       <div className="toolbar">
         <h2>{title}</h2>
-        <button onClick={close}>Close</button>
+        <button onClick={close}>{t("reader.close")}</button>
       </div>
       {children}
     </dialog>
@@ -53,6 +55,7 @@ export function ReaderPanel({
 }
 
 export function PageThumbnail({ workId, page }: { workId: string; page: Page }) {
+  const { t } = useTranslation();
   const frame = useRef<HTMLSpanElement>(null);
   const [source, setSource] = useState<string>();
   const [failed, setFailed] = useState(false);
@@ -93,7 +96,7 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
         if (!response.ok) {
           // Only a busy server is worth retrying; missing or unsupported pages stay failed.
           transient = response.status === 503;
-          throw new Error("Thumbnail unavailable");
+          throw new Error(t("reader.thumbnailUnavailable"));
         }
         const blob = await response.blob();
         if (controller.signal.aborted) return;
@@ -129,7 +132,7 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
       clearTimeout(timer);
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [workId, page.ordinal]);
+  }, [workId, page.ordinal, t]);
   return (
     <span
       ref={frame}
@@ -142,7 +145,7 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
       {source && !failed ? (
         <img src={source} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
       ) : (
-        <span className="muted">{failed ? "Preview unavailable" : "Loading…"}</span>
+        <span className="muted">{failed ? t("reader.previewUnavailable") : t("auth.loading")}</span>
       )}
     </span>
   );
@@ -161,6 +164,7 @@ export function PageIndicator({
   setEditing: (value: boolean) => void;
   jump: (index: number) => void;
 }) {
+  const { t } = useTranslation();
   const input = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
     if (editing) {
@@ -182,7 +186,7 @@ export function PageIndicator({
     >
       <input
         ref={input}
-        aria-label="Go to page"
+        aria-label={t("reader.goToPage")}
         type="number"
         min={1}
         max={count}
@@ -200,8 +204,8 @@ export function PageIndicator({
   ) : (
     <button
       className="page-indicator"
-      title="Go to page (G)"
-      aria-label={`Page ${index + 1} of ${count}. Go to page`}
+      title={t("reader.goToPageG")}
+      aria-label={t("reader.pageLabel", { page: index + 1, count })}
       onClick={() => setEditing(true)}
     >
       <span>{index + 1}</span>

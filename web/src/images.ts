@@ -1,3 +1,5 @@
+import i18n from "./i18n.ts";
+import { APIError } from "./api.tsx";
 import type { Page } from "./types.ts";
 // Decode generated 2x2 solid-colour samples; never infer codec support from User-Agent.
 const samples = {
@@ -46,19 +48,11 @@ export async function pageBlob(
   );
   if (!response.ok) {
     const value: unknown = await response.json().catch(() => null);
-    const detail = value && typeof value === "object" && "error" in value ? value.error : null;
-    const message =
-      detail &&
-      typeof detail === "object" &&
-      "message" in detail &&
-      typeof detail.message === "string"
-        ? detail.message
-        : undefined;
-    const code = detail && typeof detail === "object" && "code" in detail ? detail.code : undefined;
-    const error = Object.assign(new Error(message || `Page unavailable (${response.status})`), {
-      code,
-    });
-    throw error;
+    throw new APIError(
+      response.status,
+      value,
+      i18n.t("reader.pageUnavailable", { status: response.status }),
+    );
   }
   return {
     blob: await response.blob(),

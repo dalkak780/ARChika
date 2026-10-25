@@ -1,3 +1,7 @@
+import type { TFunction } from "i18next";
+import i18n, { statusLabel, isErrorCode, serverText } from "./i18n.ts";
+import { Trans, useTranslation } from "react-i18next";
+import { en } from "./locales/en.ts";
 import type { FormEvent, ReactNode } from "react";
 import type {
   Root,
@@ -17,50 +21,79 @@ import React, { useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useAuth, useAPI, useAction, encoded, ErrorNotice, Pending } from "./api.tsx";
 const route = getRouteApi("/admin");
-const tabs = [
-  {
-    id: "roots",
-    label: "Roots",
-    description: "Manage library folders and their filesystem settings.",
-  },
-  {
-    id: "users",
-    label: "Users",
-    description: "Create accounts and grant access to library roots.",
-  },
-  {
-    id: "jobs",
-    label: "Jobs",
-    description: "Run discovery, indexing, thumbnails, and metadata jobs.",
-  },
-  {
-    id: "offline",
-    label: "Offline",
-    description: "Review moved or missing items before cleaning up the catalog.",
-  },
-  {
-    id: "providers",
-    label: "Providers",
-    description: "Configure metadata sources and fetch or import metadata.",
-  },
-  { id: "plugins", label: "Plugins", description: "Install and configure trusted server plugins." },
-  { id: "audit", label: "Audit", description: "Review recent administrative activity." },
-];
-const jobTypes = [
-  { id: "scan", label: "Discover / scan", help: "Find new or changed archives in a root." },
-  {
-    id: "reconcile",
-    label: "Reconcile filesystem",
-    help: "Verify the catalog against the filesystem and mark missing items offline.",
-  },
-  { id: "index_bulk", label: "Index page lists", help: "Read page lists for the selected works." },
-  {
-    id: "thumbnail",
-    label: "Generate thumbnails",
-    help: "Pre-generate cover thumbnails for the selected works.",
-  },
-  { id: "crawl_bulk", label: "Crawl metadata", help: "Fetch metadata from a provider." },
-];
+function providerName(provider: Provider, t: TFunction) {
+  return provider.kind === "builtin" && provider.id === "local-json"
+    ? t("admin.localJson")
+    : provider.name;
+}
+function adminTabs(t: TFunction) {
+  return [
+    {
+      id: "roots",
+      label: t("library.roots"),
+      description: t("admin.manageLibraryFoldersAndTheirFilesystemSettings"),
+    },
+    {
+      id: "users",
+      label: t("admin.users"),
+      description: t("admin.createAccountsAndGrantAccessToLibraryRoots"),
+    },
+    {
+      id: "jobs",
+      label: t("admin.jobs"),
+      description: t("admin.runDiscoveryIndexingThumbnailsAndMetadataJobs"),
+    },
+    {
+      id: "offline",
+      label: t("admin.offline"),
+      description: t("admin.reviewMovedOrMissingItemsBeforeCleaningUpThe"),
+    },
+    {
+      id: "providers",
+      label: t("admin.providers"),
+      description: t("admin.configureMetadataSourcesAndFetchOrImportMetadata"),
+    },
+    {
+      id: "plugins",
+      label: t("admin.plugins"),
+      description: t("admin.installAndConfigureTrustedServerPlugins"),
+    },
+    {
+      id: "audit",
+      label: t("admin.audit"),
+      description: t("admin.reviewRecentAdministrativeActivity"),
+    },
+  ];
+}
+function availableJobTypes(t: TFunction) {
+  return [
+    {
+      id: "scan",
+      label: t("admin.discoverScan"),
+      help: t("admin.findNewOrChangedArchivesInARoot"),
+    },
+    {
+      id: "reconcile",
+      label: t("admin.reconcileFilesystem"),
+      help: t("admin.verifyTheCatalogAgainstTheFilesystemAndMarkMissing"),
+    },
+    {
+      id: "index_bulk",
+      label: t("admin.indexPageLists"),
+      help: t("admin.readPageListsForTheSelectedWorks"),
+    },
+    {
+      id: "thumbnail",
+      label: t("admin.generateThumbnails"),
+      help: t("admin.preGenerateCoverThumbnailsForTheSelectedWorks"),
+    },
+    {
+      id: "crawl_bulk",
+      label: t("admin.crawlMetadata"),
+      help: t("admin.fetchMetadataFromAProvider"),
+    },
+  ];
+}
 export function jobActions(state: string) {
   switch (state) {
     case "queued":
@@ -75,16 +108,17 @@ export function jobActions(state: string) {
       return [];
   }
 }
-function relativeTime(timestamp: number) {
+function relativeTime(timestamp: number, language: string) {
   const seconds = Math.round((timestamp - Date.now()) / 1000);
-  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const format = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
   if (Math.abs(seconds) < 60) return format.format(seconds, "second");
   if (Math.abs(seconds) < 3600) return format.format(Math.round(seconds / 60), "minute");
   if (Math.abs(seconds) < 86400) return format.format(Math.round(seconds / 3600), "hour");
   return format.format(Math.round(seconds / 86400), "day");
 }
 const formText = (value: FormDataEntryValue | null) => {
-  if (value !== null && typeof value !== "string") throw new Error("Expected a text form field");
+  if (value !== null && typeof value !== "string")
+    throw new Error(i18n.t("admin.expectedATextFormField"));
   return value || "";
 };
 const list = (value: FormDataEntryValue | null) =>
@@ -139,14 +173,61 @@ function Check({
     </label>
   );
 }
-export function Result({ value, job = false }: { value: unknown; job?: boolean }) {
+function resultLabel(key: string, t: TFunction) {
+  return isResultKey(key) ? t(`result.${key}`) : key;
+}
+function isResultKey(key: string): key is keyof typeof en.result {
+  return Object.hasOwn(en.result, key);
+}
+function localizedResult(value: unknown, language: string, t: TFunction, field = ""): unknown {
+  if (language !== "ko") return value;
+  if (["config", "manifest", "fields", "tags"].includes(field)) return value;
+  if (Array.isArray(value)) return value.map((item) => localizedResult(item, language, t, field));
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        resultLabel(key, t),
+        localizedResult(child, language, t, key),
+      ]),
+    );
+  if (typeof value === "number" && ["created", "updated"].includes(field))
+    return new Date(value).toLocaleString(language);
+  if (typeof value === "string") {
+    if (field === "detail") {
+      try {
+        const detail: unknown = JSON.parse(value);
+        return localizedResult(detail, language, t);
+      } catch {
+        return value;
+      }
+    }
+    if (
+      ["state", "status", "index_status", "origin", "kind", "type", "action", "mode"].includes(
+        field,
+      )
+    )
+      return statusLabel(value, t);
+    if (["warning", "findings"].includes(field)) return serverText(value, t);
+  }
+  return value;
+}
+export function Result({
+  value,
+  job = false,
+  raw = false,
+}: {
+  value: unknown;
+  job?: boolean;
+  raw?: boolean;
+}) {
+  const { t, i18n } = useTranslation();
   if (value && typeof value === "object") {
     let message = "";
     if (job && "count" in value && typeof value.count === "number")
-      message = `This job would cover ${value.count} items.`;
-    else if (job && "id" in value && typeof value.id === "string") message = "Job queued.";
+      message = t("admin.jobCount", { count: value.count });
+    else if (job && "id" in value && typeof value.id === "string") message = t("admin.jobQueued");
     else if ("ok" in value && value.ok === true && Object.keys(value).length === 1)
-      message = "Saved.";
+      message = t("admin.saved");
     if (message)
       return (
         <p className="notice" role="status">
@@ -156,7 +237,7 @@ export function Result({ value, job = false }: { value: unknown; job?: boolean }
   }
   return value ? (
     <pre className="result" role="status">
-      {JSON.stringify(value, null, 2)}
+      {JSON.stringify(raw ? value : localizedResult(value, i18n.language, t), null, 2)}
     </pre>
   ) : null;
 }
@@ -184,26 +265,27 @@ function ConfirmButton({
   );
 }
 export default function Admin() {
+  const { t } = useTranslation();
   const { user } = useAuth(),
     { tab } = route.useSearch();
   if (!user.admin)
     return (
       <main id="main">
-        <h1>Administrator access required</h1>
-        <Link to="/">Library</Link>
+        <h1>{t("admin.administratorAccessRequired")}</h1>
+        <Link to="/">{t("nav.library")}</Link>
       </main>
     );
   return (
     <main id="main" className="admin">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">SYSTEM & CATALOG</div>
-          <h1>Administration</h1>
+          <div className="eyebrow">{t("admin.systemCatalog")}</div>
+          <h1>{t("nav.administration")}</h1>
         </div>
-        <span className="badge">Administrator</span>
+        <span className="badge">{t("admin.administrator")}</span>
       </div>
-      <nav className="tabs" aria-label="Administration sections">
-        {tabs.map(({ id: name, label }) => (
+      <nav className="tabs" aria-label={t("admin.administrationSections")}>
+        {adminTabs(t).map(({ id: name, label }) => (
           <Link
             key={name}
             to="/admin"
@@ -215,7 +297,7 @@ export default function Admin() {
           </Link>
         ))}
       </nav>
-      <p className="muted">{tabs.find((item) => item.id === tab)?.description}</p>
+      <p className="muted">{adminTabs(t).find((item) => item.id === tab)?.description}</p>
       {tab === "roots" ? (
         <Roots />
       ) : tab === "users" ? (
@@ -238,6 +320,7 @@ export default function Admin() {
   );
 }
 function Roots() {
+  const { t } = useTranslation();
   const roots = useAPI<Root[]>(["roots"], "/roots"),
     preview = useAPI<ConfigPreview>(["config-preview"], "/admin/config/preview"),
     providers = useAPI<Providers>(["providers"], "/admin/providers");
@@ -245,52 +328,49 @@ function Roots() {
   return (
     <>
       <section className="panel">
-        <h2>Getting started</h2>
-        <p className="muted">Set up your library in this order.</p>
+        <h2>{t("admin.gettingStarted")}</h2>
+        <p className="muted">{t("admin.setUpYourLibraryInThisOrder")}</p>
         <ol className="getting-started">
           <li>
-            <Link to="/admin" search={{ tab: "roots" }}>
-              Roots
-            </Link>
-            : confirm library folders{roots.data ? ` (${roots.data.length} configured)` : ""}.
+            <Trans
+              i18nKey="admin.setupRoots"
+              values={{
+                configured: roots.data ? t("admin.configured", { count: roots.data.length }) : "",
+              }}
+              components={{ link: <Link to="/admin" search={{ tab: "roots" }} /> }}
+            />
           </li>
           <li>
-            <Link to="/admin" search={{ tab: "jobs" }}>
-              Jobs
-            </Link>
-            : run Discover / scan.
+            <Trans
+              i18nKey="admin.setupJobs"
+              components={{ link: <Link to="/admin" search={{ tab: "jobs" }} /> }}
+            />
           </li>
           <li>
-            <Link to="/admin" search={{ tab: "users" }}>
-              Users
-            </Link>
-            : create accounts and grant roots.
+            <Trans
+              i18nKey="admin.setupUsers"
+              components={{ link: <Link to="/admin" search={{ tab: "users" }} /> }}
+            />
           </li>
           <li>
-            <Link to="/admin" search={{ tab: "providers" }}>
-              Providers
-            </Link>
-            : fetch metadata (optional).
+            <Trans
+              i18nKey="admin.setupProviders"
+              components={{ link: <Link to="/admin" search={{ tab: "providers" }} /> }}
+            />
           </li>
           <li>
-            <Link to="/admin" search={{ tab: "offline" }}>
-              Offline
-            </Link>
-            : clean up missing items.
+            <Trans
+              i18nKey="admin.setupOffline"
+              components={{ link: <Link to="/admin" search={{ tab: "offline" }} /> }}
+            />
           </li>
         </ol>
       </section>
-      <p className="notice">
-        Original files are read-only. Adding a root does not start a scan. Paths belong to the
-        server/container filesystem; explicitly enqueue discovery in Jobs.
-      </p>
+      <p className="notice">{t("admin.originalFilesAreReadOnlyAddingARootDoes")}</p>
       <ErrorNotice error={roots.error || preview.error || action.error || providers.error} />
       <section className="panel">
-        <h2>Changes from config file</h2>
-        <p className="muted">
-          These are differences between archika.yaml and the catalog; apply only the changes you
-          select.
-        </p>
+        <h2>{t("admin.changesFromConfigFile")}</h2>
+        <p className="muted">{t("admin.theseAreDifferencesBetweenArchikaYamlAndTheCatalog")}</p>
         {preview.data && (
           <form
             onSubmit={(event) => {
@@ -308,15 +388,15 @@ function Roots() {
                 <span className="config-change" title={change.existing_id || change.key}>
                   <strong>{change.name}</strong>
                   <span className="muted">{change.path}</span>
-                  <span className="badge">{change.action}</span>
+                  <span className="badge">{statusLabel(change.action, t)}</span>
                 </span>
               </Check>
             ))}
             {!preview.data.changes.length && (
-              <p className="muted">Catalog matches the config file.</p>
+              <p className="muted">{t("admin.catalogMatchesTheConfigFile")}</p>
             )}
             <button disabled={action.isPending || !preview.data.changes.length}>
-              Apply selected changes
+              {t("admin.applySelectedChanges")}
             </button>
             <Result value={action.data} />
           </form>
@@ -327,13 +407,14 @@ function Roots() {
         <RootEditor key={root.id} root={root} providers={providers.data?.providers || []} />
       ))}
       <details className="panel">
-        <summary>Add read-only root</summary>
+        <summary>{t("admin.addReadOnlyRoot")}</summary>
         <RootForm providers={providers.data?.providers || []} />
       </details>
     </>
   );
 }
 function RootForm({ root = {}, providers = [] }: { root?: Partial<Root>; providers?: Provider[] }) {
+  const { t } = useTranslation();
   const action = useAction(),
     [error, setError] = useState<unknown>(null),
     [result, setResult] = useState<unknown>(null);
@@ -366,19 +447,19 @@ function RootForm({ root = {}, providers = [] }: { root?: Partial<Root>; provide
     <form onSubmit={submit}>
       <div className="form-grid">
         <label>
-          Stable configuration key
+          {t("admin.stableConfigurationKey")}
           <input name="key" defaultValue={root.key} required pattern="[A-Za-z0-9_.-]+" />
         </label>
         <label>
-          Display name
+          {t("admin.displayName")}
           <input name="name" defaultValue={root.name} required />
         </label>
         <label className="full">
-          Server path
+          {t("admin.serverPath")}
           <input name="path" defaultValue={root.path} required />
         </label>
         <label>
-          Watcher quiet period (seconds)
+          {t("admin.watcherQuietPeriodSeconds")}
           <input
             name="quiet_seconds"
             type="number"
@@ -389,30 +470,30 @@ function RootForm({ root = {}, providers = [] }: { root?: Partial<Root>; provide
           />
         </label>
         <label>
-          Filename parsing regex
+          {t("admin.filenameParsingRegex")}
           <input
             name="parser_regex"
             defaultValue={root.parser_regex || ""}
-            placeholder="Named captures produce tags, not titles"
+            placeholder={t("admin.namedCapturesProduceTagsNotTitles")}
           />
         </label>
       </div>
       <div className="toolbar">
         <Check name="watch" checked={root.watch}>
-          Watch changes
+          {t("admin.watchChanges")}
         </Check>
         <Check name="auto_crawl" checked={root.auto_crawl}>
-          Automatically crawl changed works
+          {t("admin.automaticallyCrawlChangedWorks")}
         </Check>
         <Check name="parser_enabled" checked={root.parser_enabled}>
-          Parse filename tags
+          {t("admin.parseFilenameTags")}
         </Check>
         <Check name="trust_identity" checked={root.trust_identity}>
-          Trust filesystem identity
+          {t("admin.trustFilesystemIdentity")}
         </Check>
       </div>
       <fieldset>
-        <legend>Allowed crawler providers</legend>
+        <legend>{t("admin.allowedCrawlerProviders")}</legend>
         {providers.map((provider) => (
           <Check
             key={provider.id}
@@ -420,16 +501,15 @@ function RootForm({ root = {}, providers = [] }: { root?: Partial<Root>; provide
             value={provider.id}
             checked={root.providers?.includes(provider.id)}
           >
-            {provider.name}
+            {providerName(provider, t)}
           </Check>
         ))}
       </fieldset>
       <p className="muted small">
-        A path change performs bounded relocation verification. Review findings before forcing
-        adoption or explicitly reconciling. The server does not move originals.
+        {t("admin.aPathChangePerformsBoundedRelocationVerificationReviewFindings")}
       </p>
       <button className="primary" disabled={action.isPending}>
-        {root.id ? "Save root / verify relocation" : "Add root"}
+        {root.id ? t("admin.saveRootVerifyRelocation") : t("admin.addRoot")}
       </button>
       <ErrorNotice error={error || action.error} />
       <Result value={result} />
@@ -437,24 +517,25 @@ function RootForm({ root = {}, providers = [] }: { root?: Partial<Root>; provide
   );
 }
 function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) {
+  const { t } = useTranslation();
   const action = useAction(),
     [preview, setPreview] = useState<unknown>(null);
   return (
     <details className="panel">
       <summary>
-        {root.name} <span className="badge">{root.status}</span>{" "}
+        {root.name} <span className="badge">{statusLabel(root.status, t)}</span>{" "}
         <span className="muted">{root.path}</span>
       </summary>
-      {root.warning && <p className="notice error">{root.warning}</p>}
+      {root.warning && <p className="notice error">{serverText(root.warning, t)}</p>}
       {root.pending_path && (
         <div className="notice">
-          <strong>Pending relocation: {root.pending_path}</strong>
-          <p>
-            Force may adopt the wrong collection. Reconcile explicitly traverses this root; neither
-            action moves originals.
-          </p>
+          <strong>
+            {t("admin.pendingRelocation")}
+            {root.pending_path}
+          </strong>
+          <p>{t("admin.forceMayAdoptTheWrongCollectionReconcileExplicitlyTraverses")}</p>
           <ConfirmButton
-            message="Force this pending root relocation? Verify the target is the same collection."
+            message={t("admin.forceThisPendingRootRelocationVerifyTheTargetIs")}
             disabled={action.isPending}
             onConfirm={() =>
               action.mutate({
@@ -463,10 +544,10 @@ function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) 
               })
             }
           >
-            Force relocation
+            {t("admin.forceRelocation")}
           </ConfirmButton>{" "}
           <ConfirmButton
-            message="Start explicit reconciliation of the pending root?"
+            message={t("admin.startExplicitReconciliationOfThePendingRoot")}
             disabled={action.isPending}
             onConfirm={() =>
               action.mutate({
@@ -475,7 +556,7 @@ function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) 
               })
             }
           >
-            Reconcile target
+            {t("admin.reconcileTarget")}
           </ConfirmButton>
         </div>
       )}
@@ -492,13 +573,13 @@ function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) 
           )
         }
       >
-        Preview removing root mappings
+        {t("admin.previewRemovingRootMappings")}
       </button>
       {Boolean(preview) && (
         <>
           <Result value={preview} />
           <ConfirmButton
-            message={`Remove ${root.name} mappings and grants? Original files remain unchanged.`}
+            message={t("admin.removeRoot", { name: root.name })}
             disabled={action.isPending}
             onConfirm={() =>
               action.mutate({
@@ -508,7 +589,7 @@ function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) 
               })
             }
           >
-            Remove root mappings
+            {t("admin.removeRootMappings")}
           </ConfirmButton>
         </>
       )}
@@ -517,15 +598,15 @@ function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) 
   );
 }
 function Users() {
+  const { t } = useTranslation();
   const users = useAPI<AdminUser[]>(["users"], "/admin/users"),
     roots = useAPI<Root[]>(["roots"], "/roots");
   return (
     <>
       <section className="panel">
-        <h2>User accounts</h2>
+        <h2>{t("admin.userAccounts")}</h2>
         <p className="muted">
-          Root grants are independent. Administrator accounts have administrative access. The server
-          prevents disabling or demoting the final administrator.
+          {t("admin.rootGrantsAreIndependentAdministratorAccountsHaveAdministrativeAccess")}
         </p>
       </section>
       <ErrorNotice error={users.error || roots.error} />
@@ -535,22 +616,23 @@ function Users() {
           <summary>
             {user.name}{" "}
             <span className="badge">
-              {user.admin ? "admin" : "reader"}
-              {user.disabled ? " · disabled" : ""}
+              {statusLabel(user.admin ? "admin" : "reader", t)}
+              {user.disabled ? ` · ${statusLabel("disabled", t)}` : ""}
             </span>
           </summary>
           <UserForm user={user} roots={roots.data || []} />
         </details>
       ))}
       <section className="panel">
-        <h2>Create user</h2>
-        <p className="muted">Choose an account role and the roots this user can access.</p>
+        <h2>{t("admin.createUser")}</h2>
+        <p className="muted">{t("admin.chooseAnAccountRoleAndTheRootsThisUser")}</p>
         <UserForm roots={roots.data || []} />
       </section>
     </>
   );
 }
 function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root[] }) {
+  const { t } = useTranslation();
   const action = useAction();
   const [savedName, setSavedName] = useState("");
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -587,12 +669,12 @@ function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root
       <div className="form-grid">
         {!user.id && (
           <label>
-            Username
+            {t("auth.username")}
             <input name="name" autoComplete="off" required />
           </label>
         )}
         <label>
-          {user.id ? "New password (blank keeps current)" : "Password"}
+          {user.id ? t("admin.newPasswordBlankKeepsCurrent") : t("auth.password")}
           <input
             name="password"
             type="password"
@@ -604,16 +686,16 @@ function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root
       </div>
       <div className="toolbar">
         <Check name="admin" checked={user.admin}>
-          Administrator
+          {t("admin.administrator")}
         </Check>
         {user.id && (
           <Check name="disabled" checked={user.disabled}>
-            Disabled
+            {t("admin.disabled")}
           </Check>
         )}
       </div>
       <fieldset>
-        <legend>Root access</legend>
+        <legend>{t("admin.rootAccess")}</legend>
         {roots.map((root) => (
           <Check key={root.id} name="roots" value={root.id} checked={user.roots?.includes(root.id)}>
             {root.name}
@@ -621,12 +703,12 @@ function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root
         ))}
       </fieldset>
       <button className="primary" disabled={action.isPending}>
-        {user.id ? "Update account" : "Create account"}
+        {user.id ? t("admin.updateAccount") : t("admin.createAccount")}
       </button>
       <ErrorNotice error={action.error} />
       {action.isSuccess && (
         <p className="notice" role="status">
-          {user.id ? "Account saved." : `Created user ${savedName}.`}
+          {user.id ? t("admin.accountSaved") : t("admin.createdUser", { name: savedName })}
         </p>
       )}
     </form>
@@ -644,6 +726,7 @@ const directJobTypes = new Set([
   "filename_reparse",
 ]);
 function Jobs() {
+  const { t, i18n } = useTranslation();
   const jobs = useAPI<Job[]>(["jobs"], "/admin/jobs", { refetchInterval: 3000 }),
     roots = useAPI<Root[]>(["roots"], "/roots"),
     providers = useAPI<Providers>(["providers"], "/admin/providers");
@@ -672,27 +755,19 @@ function Jobs() {
       ...(data.get("provider") ? { provider: text(data, "provider") } : {}),
       ...(isPreview ? { preview: true } : {}),
     };
-    if (
-      !isPreview &&
-      !window.confirm(
-        "Enqueue this explicit background job? It may traverse the selected root or many works.",
-      )
-    )
+    if (!isPreview && !window.confirm(t("admin.enqueueThisExplicitBackgroundJobItMayTraverseThe")))
       return;
     action.mutate({ path: "/admin/jobs", body }, { onSuccess: setPreview });
   }
   return (
     <>
       <section className="panel">
-        <h2>Explicit background work</h2>
-        <p className="muted">
-          No startup scan or library-wide preconversion is performed. Preview scope before
-          submitting expensive work.
-        </p>
+        <h2>{t("admin.explicitBackgroundWork")}</h2>
+        <p className="muted">{t("admin.noStartupScanOrLibraryWidePreconversionIsPerformed")}</p>
         <form onSubmit={submit}>
           <div className="form-grid">
             <label>
-              Job type
+              {t("admin.jobType")}
               <select
                 name="type"
                 value={type}
@@ -701,21 +776,21 @@ function Jobs() {
                   setPreview(null);
                 }}
               >
-                {jobTypes.map((item) => (
+                {availableJobTypes(t).map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.label}
                   </option>
                 ))}
               </select>
-              <small>{jobTypes.find((item) => item.id === type)?.help}</small>
+              <small>{availableJobTypes(t).find((item) => item.id === type)?.help}</small>
             </label>
             <label>
-              Root
+              {t("library.root")}
               <select name="root_id">
-                <option value="">All permitted roots</option>
+                <option value="">{t("admin.allPermittedRoots")}</option>
                 {roots.data?.map((root) => (
                   <option key={root.id} value={root.id}>
-                    {root.name} · {root.status}
+                    {root.name} · {statusLabel(root.status, t)}
                   </option>
                 ))}
               </select>
@@ -723,23 +798,23 @@ function Jobs() {
             {type !== "scan" && type !== "reconcile" && (
               <>
                 <label>
-                  Work IDs (comma or newline)
+                  {t("admin.workIdsCommaOrNewline")}
                   <textarea name="work_ids" rows={2} />
                 </label>
                 <label>
-                  Search scope
-                  <input name="query" placeholder="Optional advanced query" />
+                  {t("admin.searchScope")}
+                  <input name="query" placeholder={t("admin.optionalAdvancedQuery")} />
                 </label>
               </>
             )}
             {type === "crawl_bulk" && (
               <label>
-                Provider
+                {t("admin.provider")}
                 <select name="provider" required>
-                  <option value="">Select provider</option>
+                  <option value="">{t("admin.selectProvider")}</option>
                   {providers.data?.providers.map((provider) => (
                     <option key={provider.id} value={provider.id}>
-                      {provider.name}
+                      {providerName(provider, t)}
                     </option>
                   ))}
                 </select>
@@ -748,10 +823,10 @@ function Jobs() {
           </div>
           <div className="toolbar">
             <button name="action" value="preview" disabled={action.isPending}>
-              Preview count
+              {t("admin.previewCount")}
             </button>
             <button className="primary" name="action" value="enqueue" disabled={action.isPending}>
-              Enqueue job
+              {t("admin.enqueueJob")}
             </button>
           </div>
         </form>
@@ -760,15 +835,15 @@ function Jobs() {
       <section className="panel">
         <div className="queue-heading">
           <div>
-            <h2>Job queue</h2>
-            <p className="muted">Monitor progress and manage queued work.</p>
+            <h2>{t("admin.jobQueue")}</h2>
+            <p className="muted">{t("admin.monitorProgressAndManageQueuedWork")}</p>
           </div>
           <div className="toolbar">
             <button
               disabled={action.isPending}
               onClick={() => action.mutate({ path: "/admin/jobs/pause", body: { paused: true } })}
             >
-              Pause all jobs
+              {t("admin.pauseAllJobs")}
             </button>
             <button
               disabled={action.isPending}
@@ -779,7 +854,7 @@ function Jobs() {
                 })
               }
             >
-              Resume all jobs
+              {t("admin.resumeAllJobs")}
             </button>
           </div>
         </div>
@@ -789,8 +864,10 @@ function Jobs() {
             checked={showAutomatic}
             onChange={(event) => setShowAutomatic(event.target.checked)}
           />
-          Show automatic jobs
-          <span className="muted small">({showAutomatic ? 0 : hidden} hidden)</span>
+          {t("admin.showAutomaticJobs")}
+          <span className="muted small">
+            {t("admin.hidden", { count: showAutomatic ? 0 : hidden })}
+          </span>
         </label>
         <ErrorNotice
           error={jobs.error || roots.error || providers.error || action.error || error}
@@ -800,11 +877,11 @@ function Jobs() {
           <table>
             <thead>
               <tr>
-                <th>Job</th>
-                <th>State</th>
-                <th>Progress</th>
-                <th>Scope / error</th>
-                <th>Actions</th>
+                <th>{t("admin.job")}</th>
+                <th>{t("admin.state")}</th>
+                <th>{t("admin.progress")}</th>
+                <th>{t("admin.scopeError")}</th>
+                <th>{t("admin.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -812,28 +889,35 @@ function Jobs() {
                 <tr key={job.id}>
                   <td>
                     <strong title={job.id}>
-                      {jobTypes.find((item) => item.id === job.type)?.label || job.type}
+                      {availableJobTypes(t).find((item) => item.id === job.type)?.label ||
+                        statusLabel(job.type, t)}
                     </strong>
-                    <small>{new Date(job.created).toLocaleString()}</small>
-                    <small title={new Date(job.updated).toLocaleString()}>
-                      Updated {relativeTime(job.updated)}
+                    <small>{new Date(job.created).toLocaleString(i18n.language)}</small>
+                    <small title={new Date(job.updated).toLocaleString(i18n.language)}>
+                      {t("admin.updated")}
+                      {relativeTime(job.updated, i18n.language)}
                     </small>
                   </td>
-                  <td>{job.state}</td>
+                  <td>{statusLabel(job.state, t)}</td>
                   <td>
                     <progress
-                      aria-label="Job progress"
+                      aria-label={t("admin.jobProgress")}
                       value={job.done}
                       max={Math.max(1, job.total)}
                     />
                     <small>
                       {job.done} / {job.total}
                     </small>
-                    {job.failed > 0 && <small className="error-text">{job.failed} failed</small>}
+                    {job.failed > 0 && (
+                      <small className="error-text">
+                        {job.failed}
+                        {t("admin.failed")}
+                      </small>
+                    )}
                   </td>
                   <td>
                     {roots.data?.find((root) => root.id === job.root_id)?.name ||
-                      (job.root_id ? "Unknown root" : job.work_id || "Bulk")}
+                      (job.root_id ? t("admin.unknownRoot") : job.work_id || t("admin.bulk"))}
                     <small className="error-text">{job.error}</small>
                   </td>
                   <td>
@@ -850,7 +934,7 @@ function Jobs() {
                             })
                           }
                         >
-                          {command}
+                          {statusLabel(command, t)}
                         </button>
                       ))}
                     </div>
@@ -861,13 +945,16 @@ function Jobs() {
           </table>
         </div>
         {visible?.length === 0 && (
-          <p className="muted">No {showAutomatic ? "" : "manual "}jobs to show.</p>
+          <p className="muted">
+            {t("admin.noJobs", { scope: showAutomatic ? "" : t("admin.manualJobs") })}
+          </p>
         )}
       </section>
     </>
   );
 }
 function Offline() {
+  const { t, i18n } = useTranslation();
   const offline = useAPI<OfflinePage>(["offline"], "/admin/offline"),
     action = useAction<OfflineActionResult>();
   const [selected, setSelected] = useState<string[]>([]),
@@ -879,13 +966,9 @@ function Offline() {
   }
   return (
     <section className="panel">
-      <h2>Missing items</h2>
-      <p className="muted">Verify missing files or preview removal of their catalog entries.</p>
-      <p className="notice">
-        An unavailable root is not proof that its works were deleted. Cleanup removes catalog/cache
-        records only when the source is still missing on an online, accessible root. Originals are
-        never deleted.
-      </p>
+      <h2>{t("admin.missingItems")}</h2>
+      <p className="muted">{t("admin.verifyMissingFilesOrPreviewRemovalOfTheirCatalog")}</p>
+      <p className="notice">{t("admin.anUnavailableRootIsNotProofThatItsWorks")}</p>
       <ErrorNotice error={offline.error || action.error} />
       <div className="toolbar">
         <button
@@ -894,7 +977,7 @@ function Offline() {
             setPreview(null);
           }}
         >
-          Select listed
+          {t("admin.selectListed")}
         </button>
         <button
           onClick={() => {
@@ -902,7 +985,7 @@ function Offline() {
             setPreview(null);
           }}
         >
-          Clear selection
+          {t("admin.clearSelection")}
         </button>
         <button
           disabled={!selected.length || action.isPending}
@@ -913,7 +996,7 @@ function Offline() {
             )
           }
         >
-          Verify / restore selected
+          {t("admin.verifyRestoreSelected")}
         </button>
         <button
           disabled={!selected.length || action.isPending}
@@ -927,16 +1010,16 @@ function Offline() {
             )
           }
         >
-          Preview cleanup
+          {t("admin.previewCleanup")}
         </button>
       </div>
       {preview && "eligible" in preview && (
         <section className="panel">
-          <h2>Cleanup preview</h2>
+          <h2>{t("admin.cleanupPreview")}</h2>
           <Result value={preview} />
           <ConfirmButton
             disabled={!preview.eligible?.length || action.isPending}
-            message="Remove the selected still-missing catalog entries and caches? Originals are untouched; eligibility is checked again."
+            message={t("admin.removeTheSelectedStillMissingCatalogEntriesAndCaches")}
             onConfirm={() =>
               action.mutate(
                 {
@@ -953,24 +1036,24 @@ function Offline() {
               )
             }
           >
-            Confirm eligible cleanup
+            {t("admin.confirmEligibleCleanup")}
           </ConfirmButton>
         </section>
       )}
       <Result value={result} />
       <p className="muted">
-        {offline.data?.total ?? "…"} offline / missing records. This is a bounded list; verify or
-        clean selected items to reveal further records.
+        {offline.data?.total ?? "…"}
+        {t("admin.offlineMissingRecordsThisIsABoundedListVerify")}
       </p>
       {offline.isPending && <Pending />}
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Select</th>
-              <th>Work</th>
-              <th>Status</th>
-              <th>Index only</th>
+              <th>{t("admin.select")}</th>
+              <th>{t("admin.work")}</th>
+              <th>{t("admin.status")}</th>
+              <th>{t("admin.indexOnly")}</th>
             </tr>
           </thead>
           <tbody>
@@ -979,7 +1062,7 @@ function Offline() {
                 <td>
                   <input
                     type="checkbox"
-                    aria-label={`Select ${work.title}`}
+                    aria-label={t("admin.selectWork", { title: work.title })}
                     checked={selected.includes(work.id)}
                     onChange={() => toggle(work.id)}
                   />
@@ -993,13 +1076,17 @@ function Offline() {
                   </small>
                 </td>
                 <td>
-                  {work.index_status}
-                  <small className="error-text">{work.error_code}</small>
+                  {statusLabel(work.index_status, t)}
+                  <small className="error-text">
+                    {i18n.resolvedLanguage === "ko" && isErrorCode(work.error_code)
+                      ? t(`errors.${work.error_code}`)
+                      : work.error_code}
+                  </small>
                 </td>
                 <td>
                   <ConfirmButton
                     disabled={action.isPending}
-                    message={`Delete only the index/cache for ${work.title}? The original remains untouched.`}
+                    message={t("admin.removeWork", { title: work.title })}
                     onConfirm={() =>
                       action.mutate({
                         path: `/admin/works/${encoded(work.id)}`,
@@ -1008,7 +1095,7 @@ function Offline() {
                       })
                     }
                   >
-                    Remove index/cache
+                    {t("admin.removeIndexCache")}
                   </ConfirmButton>
                 </td>
               </tr>
@@ -1021,15 +1108,13 @@ function Offline() {
 }
 
 function Moves() {
+  const { t } = useTranslation();
   const moves = useAPI<Move[]>(["moves"], "/admin/moves"),
     action = useAction();
   return (
     <section className="panel">
-      <h2>Possible cross-root moves</h2>
-      <p className="muted">
-        Equal size and mtime are only candidate signals, not proof. Confirmation keeps the old work
-        ID and metadata, adopts destination permissions, and reindexes only that work.
-      </p>
+      <h2>{t("admin.possibleCrossRootMoves")}</h2>
+      <p className="muted">{t("admin.equalSizeAndMtimeAreOnlyCandidateSignalsNot")}</p>
       <ErrorNotice error={moves.error || action.error} />
       {moves.data?.map((move) => (
         <div key={move.id} className="panel">
@@ -1044,7 +1129,7 @@ function Moves() {
           </p>
           <ConfirmButton
             disabled={action.isPending}
-            message="Confirm these are the same logical work? Destination metadata must be empty. Originals remain unchanged."
+            message={t("admin.confirmTheseAreTheSameLogicalWorkDestinationMetadata")}
             onConfirm={() =>
               action.mutate({
                 path: `/admin/moves/${encoded(move.id)}`,
@@ -1052,7 +1137,7 @@ function Moves() {
               })
             }
           >
-            Confirm move
+            {t("admin.confirmMove")}
           </ConfirmButton>{" "}
           <button
             disabled={action.isPending}
@@ -1063,30 +1148,28 @@ function Moves() {
               })
             }
           >
-            Keep separate
+            {t("admin.keepSeparate")}
           </button>
         </div>
       ))}
-      {moves.data?.length === 0 && <p className="muted">No pending move candidates.</p>}
+      {moves.data?.length === 0 && <p className="muted">{t("admin.noPendingMoveCandidates")}</p>}
     </section>
   );
 }
 function Providers() {
+  const { t } = useTranslation();
   const providers = useAPI<Providers>(["providers"], "/admin/providers");
   return (
     <>
       <ErrorNotice error={providers.error} />
       <section className="panel">
-        <h2>Network routing</h2>
-        <p className="muted">
-          Provider requests use the server's configured DNS/DoH and proxy policy. No credentials are
-          returned to this browser.
-        </p>
+        <h2>{t("admin.networkRouting")}</h2>
+        <p className="muted">{t("admin.providerRequestsUseTheServerSConfiguredDnsDoh")}</p>
         <dl>
           {Object.entries(providers.data?.network || {}).map(([key, value]) => (
             <React.Fragment key={key}>
               <dt>{key}</dt>
-              <dd>{String(value || "Not configured")}</dd>
+              <dd>{value ? statusLabel(String(value), t) : t("admin.notConfigured")}</dd>
             </React.Fragment>
           ))}
         </dl>
@@ -1100,6 +1183,7 @@ function Providers() {
   );
 }
 function ProviderEditor({ provider }: { provider: Provider }) {
+  const { t } = useTranslation();
   const action = useAction(),
     [error, setError] = useState<unknown>(null);
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -1134,21 +1218,25 @@ function ProviderEditor({ provider }: { provider: Provider }) {
   return (
     <details className="panel">
       <summary>
-        {provider.name}{" "}
+        {providerName(provider, t)}{" "}
         <span className="badge">
-          {provider.enabled ? "enabled" : "disabled"} · {provider.status}
+          {statusLabel(provider.enabled ? "enabled" : "disabled", t)} ·{" "}
+          {statusLabel(provider.status, t)}
         </span>
       </summary>
       <p className="muted">
-        {provider.id} · {provider.kind} · {provider.version} · Credentials{" "}
-        {provider.credential_configured ? "configured" : "not configured"}
+        {provider.id} · {statusLabel(provider.kind, t)} · {provider.version}
+        {t("admin.credentials")}{" "}
+        {provider.credential_configured
+          ? statusLabel("configured", t)
+          : t("admin.notConfiguredText")}
       </p>
       <form onSubmit={submit}>
         <Check name="enabled" checked={provider.enabled}>
-          Enable provider
+          {t("admin.enableProvider")}
         </Check>
         <label>
-          Field priority (lower wins)
+          {t("admin.fieldPriorityLowerWins")}
           <input
             type="number"
             name="priority"
@@ -1160,11 +1248,11 @@ function ProviderEditor({ provider }: { provider: Provider }) {
         </label>
         <JSONField
           name="config"
-          label="Provider configuration (JSON object; blank preserves current)"
+          label={t("admin.providerConfigurationJsonObjectBlankPreservesCurrent")}
           value={provider.config || ""}
         />
         <label>
-          Replace credentials (JSON object; blank preserves stored credentials)
+          {t("admin.replaceCredentialsJsonObjectBlankPreservesStoredCredentials")}
           <input
             type="password"
             name="credentials"
@@ -1172,15 +1260,12 @@ function ProviderEditor({ provider }: { provider: Provider }) {
             placeholder='{"cookie":"…"}'
           />
         </label>
-        <p className="small muted">
-          For e-hentai, supply the provider's cookie credentials; nhentai / chaika may accept
-          cookies or tokens. Stored secret values are never shown. Local JSON needs no credentials.
-        </p>
-        <button disabled={action.isPending}>Save provider</button>
+        <p className="small muted">{t("admin.forEHentaiSupplyTheProviderSCookieCredentials")}</p>
+        <button disabled={action.isPending}>{t("admin.saveProvider")}</button>
       </form>
       <ConfirmButton
         disabled={action.isPending}
-        message={`Clear stored credentials for ${provider.name}?`}
+        message={t("admin.clearCredentialsConfirm", { name: provider.name })}
         onConfirm={() =>
           action.mutate({
             path: `/admin/providers/${encoded(provider.id)}`,
@@ -1189,14 +1274,15 @@ function ProviderEditor({ provider }: { provider: Provider }) {
           })
         }
       >
-        Clear credentials
+        {t("admin.clearCredentials")}
       </ConfirmButton>
       <ErrorNotice error={error || action.error} />
-      {action.isSuccess && <p role="status">Provider updated.</p>}
+      {action.isSuccess && <p role="status">{t("admin.providerUpdated")}</p>}
     </details>
   );
 }
 function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: string }) {
+  const { t } = useTranslation();
   const roots = useAPI<Root[]>(["roots"], "/roots"),
     action = useAction(),
     [error, setError] = useState<unknown>(null),
@@ -1224,7 +1310,7 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
       if (
         !body.preview &&
         !workId &&
-        !window.confirm("Enqueue crawler work for this selected scope?")
+        !window.confirm(t("admin.enqueueCrawlerWorkForThisSelectedScope"))
       )
         return;
       action.mutate({ path: "/admin/crawl", body }, { onSuccess: setResult });
@@ -1234,16 +1320,16 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
   }
   return (
     <section className="panel">
-      <h2>{workId ? "Crawl this work / import JSON" : "Crawl or import local JSON"}</h2>
-      <p className="muted">Select a provider and preview the scope before fetching metadata.</p>
+      <h2>{workId ? t("admin.crawlThisWorkImportJson") : t("admin.crawlOrImportLocalJson")}</h2>
+      <p className="muted">{t("admin.selectAProviderAndPreviewTheScopeBeforeFetching")}</p>
       <form onSubmit={submit}>
         <div className="form-grid">
           <label>
-            Provider
+            {t("admin.provider")}
             <select name="provider" required>
               {providers.map((provider) => (
                 <option key={provider.id} value={provider.id}>
-                  {provider.name} ({provider.id})
+                  {providerName(provider, t)} ({provider.id})
                 </option>
               ))}
             </select>
@@ -1251,9 +1337,9 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
           {!workId && (
             <>
               <label>
-                Root
+                {t("library.root")}
                 <select name="root_id">
-                  <option value="">Unrestricted scope</option>
+                  <option value="">{t("admin.unrestrictedScope")}</option>
                   {roots.data?.map((root) => (
                     <option key={root.id} value={root.id}>
                       {root.name}
@@ -1262,11 +1348,11 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
                 </select>
               </label>
               <label>
-                Work IDs
+                {t("admin.workIds")}
                 <textarea name="work_ids" rows={2} />
               </label>
               <label>
-                Search scope
+                {t("admin.searchScope")}
                 <input name="query" />
               </label>
             </>
@@ -1274,20 +1360,19 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
         </div>
         <JSONField
           name="local_json"
-          label="Local JSON metadata (only for local-json; leave blank for network providers)"
+          label={t("admin.localJsonMetadataOnlyForLocalJsonLeaveBlank")}
           value=""
           rows={6}
         />
         <p className="small muted">
-          Normalized import: fields object (title, description, …), tags array (namespace:value),
-          optional source_id and source_url. Ambiguous matches remain candidates until reviewed.
+          {t("admin.normalizedImportFieldsObjectTitleDescriptionTagsArrayNamespace")}
         </p>
         <div className="toolbar">
           <button name="action" value="preview" disabled={action.isPending}>
-            Preview count
+            {t("admin.previewCount")}
           </button>
           <button name="action" value="enqueue" disabled={action.isPending}>
-            Enqueue crawl / import
+            {t("admin.enqueueCrawlImport")}
           </button>
         </div>
       </form>
@@ -1297,6 +1382,7 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
   );
 }
 function Plugins() {
+  const { t } = useTranslation();
   const providers = useAPI<Providers>(["providers"], "/admin/providers"),
     action = useAction(),
     [error, setError] = useState<unknown>(null);
@@ -1306,7 +1392,7 @@ function Plugins() {
       data = new FormData(form);
     setError(null);
     try {
-      if (!data.has("trusted")) throw new Error("Explicit trust confirmation is required.");
+      if (!data.has("trusted")) throw new Error(t("admin.explicitTrustConfirmationIsRequired"));
       action.mutate(
         {
           path: "/admin/plugins",
@@ -1325,25 +1411,23 @@ function Plugins() {
   return (
     <>
       <p className="notice error">
-        <strong>Trusted executable plugins only.</strong> Plugins execute server-side with the
-        server user's privileges. They are not a security sandbox. Review the executable, manifest,
-        declared hosts and permissions before installation.
+        <Trans i18nKey="admin.pluginTrust" components={{ strong: <strong /> }} />
       </p>
       <ErrorNotice error={providers.error || action.error || error} />
       {providers.data?.plugins?.map((plugin) => (
         <PluginEditor key={plugin.id} plugin={plugin} />
       ))}
       <section className="panel">
-        <h2>Install trusted plugin</h2>
-        <p className="muted">Register a reviewed executable and its manifest.</p>
+        <h2>{t("admin.installTrustedPlugin")}</h2>
+        <p className="muted">{t("admin.registerAReviewedExecutableAndItsManifest")}</p>
         <form onSubmit={submit}>
           <label>
-            Server executable path
+            {t("admin.serverExecutablePath")}
             <input name="executable" required placeholder="/opt/archika/plugins/provider" />
           </label>
           <JSONField
             name="manifest"
-            label="Plugin manifest (JSON)"
+            label={t("admin.pluginManifestJson")}
             required
             value={{
               id: "",
@@ -1356,11 +1440,9 @@ function Plugins() {
             }}
             rows={12}
           />
-          <Check name="trusted">
-            I reviewed this executable and trust it to run without a sandbox.
-          </Check>
+          <Check name="trusted">{t("admin.iReviewedThisExecutableAndTrustItToRun")}</Check>
           <button className="danger" disabled={action.isPending}>
-            Install trusted executable
+            {t("admin.installTrustedExecutable")}
           </button>
         </form>
       </section>
@@ -1368,6 +1450,7 @@ function Plugins() {
   );
 }
 function PluginEditor({ plugin }: { plugin: Plugin }) {
+  const { t } = useTranslation();
   const action = useAction(),
     [error, setError] = useState<unknown>(null);
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -1390,19 +1473,23 @@ function PluginEditor({ plugin }: { plugin: Plugin }) {
   return (
     <details className="panel">
       <summary>
-        {plugin.id} · {plugin.version} · {plugin.enabled ? "enabled" : "disabled"}
+        {plugin.id} · {plugin.version} · {statusLabel(plugin.enabled ? "enabled" : "disabled", t)}
       </summary>
-      <Result value={plugin.manifest} />
+      <Result value={plugin.manifest} raw />
       <form onSubmit={submit}>
         <Check name="enabled" checked={plugin.enabled}>
-          Enable plugin
+          {t("admin.enablePlugin")}
         </Check>
-        <JSONField name="config" label="Plugin configuration (JSON)" value={plugin.config || {}} />
-        <button disabled={action.isPending}>Save plugin</button>
+        <JSONField
+          name="config"
+          label={t("admin.pluginConfigurationJson")}
+          value={plugin.config || {}}
+        />
+        <button disabled={action.isPending}>{t("admin.savePlugin")}</button>
       </form>
       <ConfirmButton
         disabled={action.isPending}
-        message={`Uninstall plugin ${plugin.id}?`}
+        message={t("admin.uninstall", { id: plugin.id })}
         onConfirm={() =>
           action.mutate({
             path: `/admin/plugins/${encoded(plugin.id)}`,
@@ -1411,18 +1498,19 @@ function PluginEditor({ plugin }: { plugin: Plugin }) {
           })
         }
       >
-        Uninstall plugin
+        {t("admin.uninstallPlugin")}
       </ConfirmButton>
       <ErrorNotice error={error || action.error} />
     </details>
   );
 }
 function Audit() {
+  const { t } = useTranslation();
   const audit = useAPI<AuditRecord[]>(["audit"], "/admin/audit");
   return (
     <section className="panel">
-      <h2>Recent audit records</h2>
-      <p className="muted">Bounded server audit log; credentials are not displayed.</p>
+      <h2>{t("admin.recentAuditRecords")}</h2>
+      <p className="muted">{t("admin.boundedServerAuditLogCredentialsAreNotDisplayed")}</p>
       <ErrorNotice error={audit.error} />
       {audit.isPending ? <Pending /> : <Result value={audit.data} />}
     </section>
@@ -1430,6 +1518,7 @@ function Audit() {
 }
 
 export function WorkMetadata({ workId }: { workId: string }) {
+  const { t } = useTranslation();
   const { user } = useAuth(),
     metadata = useAPI<Metadata>(["metadata", workId], `/works/${encoded(workId)}/metadata`);
   const providers = useAPI<Providers>(["providers"], "/admin/providers", {
@@ -1460,7 +1549,7 @@ export function WorkMetadata({ workId }: { workId: string }) {
   }
   return (
     <>
-      <h2>Metadata & provenance</h2>
+      <h2>{t("admin.metadataProvenance")}</h2>
       <ErrorNotice error={metadata.error || action.error || error} />
       {metadata.isPending && <Pending />}
       <dl>
@@ -1472,8 +1561,8 @@ export function WorkMetadata({ workId }: { workId: string }) {
                 <>
                   {String(detail.value ?? "")}
                   <small>
-                    {detail.origin || "unknown source"}
-                    {detail.manual ? " · manual override" : ""}
+                    {detail.origin ? statusLabel(detail.origin, t) : t("admin.unknownSource")}
+                    {detail.manual ? t("admin.manualOverride") : ""}
                   </small>
                 </>
               ) : (
@@ -1489,59 +1578,57 @@ export function WorkMetadata({ workId }: { workId: string }) {
         ))}
       </div>
       <details>
-        <summary>Provider snapshots</summary>
+        <summary>{t("admin.providerSnapshots")}</summary>
         <Result value={metadata.data?.providers} />
       </details>
       {user.admin && (
         <>
           <details className="panel">
-            <summary>Edit manual fields & tags</summary>
-            <p className="small muted">
-              Manual overrides take precedence. Use null to clear a field or reset its override by
-              name to restore provider data. Filename display titles are never rewritten by filename
-              parsing.
-            </p>
+            <summary>{t("admin.editManualFieldsTags")}</summary>
+            <p className="small muted">{t("admin.manualOverridesTakePrecedenceUseNullToClearA")}</p>
             <form onSubmit={submit}>
               <JSONField
                 name="fields"
-                label="Field overrides (JSON object; string or null values)"
+                label={t("admin.fieldOverridesJsonObjectStringOrNullValues")}
                 value={{}}
               />
               <label>
-                Reset field overrides (comma or newline)
+                {t("admin.resetFieldOverridesCommaOrNewline")}
                 <textarea name="reset_fields" rows={2} />
               </label>
               <div className="form-grid">
                 <label>
-                  Add tags
+                  {t("admin.addTags")}
                   <textarea name="add_tags" rows={3} />
                 </label>
                 <label>
-                  Remove tags
+                  {t("admin.removeTags")}
                   <textarea name="remove_tags" rows={3} />
                 </label>
                 <label>
-                  Reset tag overrides
+                  {t("admin.resetTagOverrides")}
                   <textarea name="reset_tags" rows={3} />
                 </label>
               </div>
-              <button disabled={action.isPending}>Save metadata changes</button>
+              <button disabled={action.isPending}>{t("admin.saveMetadataChanges")}</button>
             </form>
           </details>
           <section>
-            <h3>Match candidates</h3>
+            <h3>{t("admin.matchCandidates")}</h3>
             {!metadata.data?.candidates?.length && (
-              <p className="muted">No candidates awaiting review.</p>
+              <p className="muted">{t("admin.noCandidatesAwaitingReview")}</p>
             )}
             {metadata.data?.candidates?.map((candidate) => (
               <article className="panel" key={candidate.id}>
                 <h4>{candidate.title}</h4>
                 <p>
-                  {candidate.provider} · {candidate.source_id} · confidence {candidate.confidence}
+                  {candidate.provider} · {candidate.source_id}
+                  {t("admin.confidence")}
+                  {candidate.confidence}
                 </p>
                 {/^https?:\/\//.test(candidate.source_url || "") && (
                   <a href={candidate.source_url} rel="noreferrer" target="_blank">
-                    View source ↗
+                    {t("admin.viewSource")}
                   </a>
                 )}
                 <Result value={candidate.evidence} />
@@ -1555,7 +1642,7 @@ export function WorkMetadata({ workId }: { workId: string }) {
                       })
                     }
                   >
-                    Approve match
+                    {t("admin.approveMatch")}
                   </button>
                   <button
                     disabled={action.isPending}
@@ -1566,7 +1653,7 @@ export function WorkMetadata({ workId }: { workId: string }) {
                       })
                     }
                   >
-                    Reject match
+                    {t("admin.rejectMatch")}
                   </button>
                 </div>
               </article>
@@ -1574,12 +1661,10 @@ export function WorkMetadata({ workId }: { workId: string }) {
           </section>
           <CrawlForm providers={providers.data?.providers || []} workId={workId} />
           <hr />
-          <p className="small muted">
-            Remove this work from the index and cache only. No original file is modified or deleted.
-          </p>
+          <p className="small muted">{t("admin.removeThisWorkFromTheIndexAndCacheOnly")}</p>
           <ConfirmButton
             disabled={action.isPending}
-            message="Remove this work's catalog entry and cached representations? The original is untouched."
+            message={t("admin.removeThisWorkSCatalogEntryAndCachedRepresentations")}
             onConfirm={() =>
               action.mutate(
                 {
@@ -1591,7 +1676,7 @@ export function WorkMetadata({ workId }: { workId: string }) {
               )
             }
           >
-            Remove index / cache
+            {t("admin.removeIndexCacheText")}
           </ConfirmButton>
         </>
       )}
