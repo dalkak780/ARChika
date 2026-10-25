@@ -417,6 +417,8 @@ export default function Reader() {
   const zoomStyle: CSSProperties & { "--zoom": number } = { "--zoom": zoom };
   const origin = libraryOrigins.get(workId),
     work = result.data?.work;
+  // Read optional fields once; compiled memo dependencies must not dereference an unloaded work.
+  const favorite = work?.favorite ?? false;
   return (
     <main
       id="main"
@@ -513,12 +515,12 @@ export default function Reader() {
                 action.mutate({
                   path: `/works/${encoded(workId)}/favorite`,
                   method: "PUT",
-                  body: { favorite: !work!.favorite },
+                  body: { favorite: !favorite },
                   invalidate: [["work", workId], ["works"], ["works-infinite"]],
                 })
               }
             >
-              {work?.favorite ? "Remove favorite" : "Add favorite"}
+              {favorite ? "Remove favorite" : "Add favorite"}
             </button>
           </>
           <button onClick={() => setMetadata((value) => !value)} aria-expanded={metadata}>
