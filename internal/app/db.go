@@ -26,6 +26,7 @@ CREATE INDEX IF NOT EXISTS works_recent ON works(registered_at DESC,id DESC);
 CREATE TABLE IF NOT EXISTS aliases(id INTEGER PRIMARY KEY,work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE,path TEXT NOT NULL,original_name TEXT NOT NULL,title TEXT NOT NULL,title_sort TEXT NOT NULL,parent TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'online',physical_key TEXT,size INTEGER NOT NULL,mtime INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0,filename_tags TEXT NOT NULL DEFAULT '[]',parser_version TEXT NOT NULL DEFAULT '',UNIQUE(root_id,path));
 CREATE INDEX IF NOT EXISTS aliases_work ON aliases(work_id,root_id,status);
 CREATE INDEX IF NOT EXISTS aliases_title ON aliases(title_sort,work_id);
+CREATE INDEX IF NOT EXISTS aliases_parent ON aliases(root_id,parent);
 CREATE INDEX IF NOT EXISTS aliases_root ON aliases(root_id,status,work_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS alias_words USING fts5(title,path,tags,tokenize='unicode61',prefix='1 2 3');
 CREATE VIRTUAL TABLE IF NOT EXISTS alias_substrings USING fts5(title,path,tags,tokenize='trigram');

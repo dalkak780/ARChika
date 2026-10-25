@@ -305,17 +305,20 @@ summary .muted {
   grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
   gap: 1.35rem;
 }
-.work-card {
+.work-card,
+.folder-card {
   position: relative;
   display: block;
   min-width: 0;
   color: var(--text);
   border-radius: 9px;
 }
-.work-card:hover {
+.work-card:hover,
+.folder-card:hover {
   text-decoration: none;
 }
-.work-card:hover h3 {
+.work-card:hover h3,
+.folder-card:hover h3 {
   color: var(--accent);
 }
 .cover {
@@ -347,6 +350,7 @@ summary .muted {
   font-size: 0.7rem;
   margin-top: 0.4rem;
 }
+.folder-badge,
 .status {
   position: absolute;
   left: 0.5rem;
@@ -364,14 +368,16 @@ summary .muted {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
-.work-card h3 {
+.work-card h3,
+.folder-card h3 {
   font-size: 0.88rem;
   margin: 0.65rem 0 0.2rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.work-card p {
+.work-card p,
+.folder-card p {
   margin: 0;
   font-size: 0.7rem;
   color: var(--muted);
@@ -1326,4 +1332,29 @@ hr {
   .reader .page-jump {
     width: 42px;
   }
+}
+
+.folder-grid {
+  margin-bottom: 1.4rem;
+}
+.folder-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.folder-path > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.folder-path > * + *::before {
+  content: "/";
+  color: var(--muted);
+  margin-right: 0.5rem;
+}
+section[aria-label="Roots"] .folder-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 1rem;
 }

@@ -91,6 +91,8 @@ Administrators create accounts, disable them, reset passwords and grant access t
 
 ## Library and indexing
 
+Choose Folders to browse an accessible root's directory tree. Folder cards count works throughout each subtree; the work list, search, favorites, and reader navigation stay within the current folder. `GET /api/folders?root=<rootID>&path=<relativePath>` returns `root_id`, `root_name`, `path`, the direct `works` count, and `folders` with `name`, `path`, recursive `works`, and `cover_work_id`. `GET /api/works` and `GET /api/works/{id}/neighbors` accept `folder=<relativePath>` with a required `root`; an empty path selects the root's direct works. Omitting `folder` keeps the full-root search.
+
 - Each archive file is one work. A folder that contains images and no subfolders is a gallery. Other folders are only used for organization.
 - Titles are the original file or folder name without the archive extension. An optional per-root RE2 pattern can extract tags (artist, group, event, series, language, ...) from filenames; it never changes the title.
 - Discovery only records paths and file metadata. Page lists are built later in the background, or immediately when you open a work that hasn't been indexed yet. Thumbnails are generated on first view.

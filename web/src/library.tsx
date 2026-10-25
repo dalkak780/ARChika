@@ -1,6 +1,14 @@
 import type { FormEvent, UIEvent } from "react";
 import type { InfiniteData } from "@tanstack/react-query";
-import type { Work, WorksPage, Root, SavedSearch, LibrarySearch } from "./types.ts";
+import type {
+  Work,
+  WorksPage,
+  Root,
+  SavedSearch,
+  LibrarySearch,
+  Folder,
+  FolderListing,
+} from "./types.ts";
 import React, { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +33,7 @@ function workPath(search: LibrarySearch, page: number, cursor?: string) {
     limit: String(search.limit),
   });
   if (search.root) params.set("root", search.root);
+  if (search.browse === "folders" && search.root) params.set("folder", search.folder);
   if (cursor) params.set("cursor", cursor);
   return `/works?${params}`;
 }
@@ -129,6 +138,15 @@ export default function Library() {
     navigate({
       search: (previous) => ({ ...previous, ...patch, page: patch.page ?? 1 }),
     });
+  useEffect(() => {
+    const onlyRoot = roots.data?.length === 1 ? roots.data[0] : undefined;
+    if (search.browse === "folders" && !search.root && onlyRoot) {
+      void navigate({
+        search: { ...search, root: onlyRoot.id, folder: "", page: 1 },
+        replace: true,
+      });
+    }
+  }, [navigate, roots.data, search]);
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     action.mutate(
@@ -147,6 +165,20 @@ export default function Library() {
           <h1>Library</h1>
         </div>
         <div className="toolbar library-controls">
+          <div className="segmented" aria-label="Browse mode">
+            <button
+              aria-pressed={search.browse === "all"}
+              onClick={() => update({ browse: "all", root: "", folder: "" })}
+            >
+              All works
+            </button>
+            <button
+              aria-pressed={search.browse === "folders"}
+              onClick={() => update({ browse: "folders", folder: "" })}
+            >
+              Folders
+            </button>
+          </div>
           <button
             className="favorites-filter"
             aria-pressed={search.q === "favorite:true"}
@@ -192,7 +224,10 @@ export default function Library() {
         <div className="toolbar">
           <label>
             Root
-            <select value={search.root} onChange={(e) => update({ root: e.target.value })}>
+            <select
+              value={search.root}
+              onChange={(e) => update({ root: e.target.value, folder: "" })}
+            >
               <option value="">All accessible roots</option>
               {roots.data?.map((root) => (
                 <option key={root.id} value={root.id}>
@@ -273,18 +308,145 @@ export default function Library() {
         </details>
       </section>
       <ErrorNotice error={roots.error || saved.error || action.error} />
-      {search.view === "infinite" ? (
-        <InfiniteLibrary key={JSON.stringify({ ...search, page: undefined })} search={search} />
+      {search.browse === "folders" ? (
+        search.root ? (
+          <FolderBrowser search={search} roots={roots.data || []} update={update} />
+        ) : (
+          <section className="card-grid" aria-label="Roots">
+            {roots.data?.map((root) => (
+              <Link
+                key={root.id}
+                className="folder-card"
+                to="/"
+                search={{ ...search, root: root.id, folder: "", page: 1 }}
+              >
+                <h3>{root.name}</h3>
+              </Link>
+            ))}
+          </section>
+        )
       ) : (
-        <PagedLibrary search={search} update={update} />
+        <LibraryWorks search={search} update={update} />
       )}
     </main>
+  );
+}
+function FolderCard({ folder, search }: { folder: Folder; search: LibrarySearch }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <Link className="folder-card" to="/" search={{ ...search, folder: folder.path, page: 1 }}>
+      <div className="cover">
+        {failed ? (
+          <span className="cover-placeholder" aria-label="Cover unavailable">
+            ▧<small>No preview</small>
+          </span>
+        ) : (
+          <img
+            src={thumbnailURL(folder.cover_work_id)}
+            loading="lazy"
+            decoding="async"
+            alt=""
+            onError={() => setFailed(true)}
+          />
+        )}
+        <span className="folder-badge">Folder</span>
+      </div>
+      <h3>{folder.name}</h3>
+      <p>
+        {folder.works} {folder.works === 1 ? "work" : "works"}
+      </p>
+    </Link>
+  );
+}
+function FolderBrowser({
+  search,
+  roots,
+  update,
+}: {
+  search: LibrarySearch;
+  roots: Root[];
+  update: (patch: Partial<LibrarySearch>) => void;
+}) {
+  const params = new URLSearchParams({ root: search.root, path: search.folder });
+  const result = useAPI<FolderListing>(
+    ["folders", search.root, search.folder],
+    `/folders?${params}`,
+  );
+  const listing = result.data;
+  const segments = search.folder ? search.folder.split("/") : [];
+  return (
+    <>
+      <ErrorNotice error={result.error} />
+      {result.isPending && <Pending />}
+      {listing && (
+        <>
+          <nav className="folder-path" aria-label="Folder path">
+            {roots.length > 1 && (
+              <Link to="/" search={{ ...search, root: "", folder: "", page: 1 }}>
+                All roots
+              </Link>
+            )}
+            {segments.length ? (
+              <Link to="/" search={{ ...search, folder: "", page: 1 }}>
+                {listing.root_name}
+              </Link>
+            ) : (
+              <span aria-current="page">{listing.root_name}</span>
+            )}
+            {segments.map((segment, index) =>
+              index === segments.length - 1 ? (
+                <span key={index} aria-current="page">
+                  {segment}
+                </span>
+              ) : (
+                <Link
+                  key={index}
+                  to="/"
+                  search={{ ...search, folder: segments.slice(0, index + 1).join("/"), page: 1 }}
+                >
+                  {segment}
+                </Link>
+              ),
+            )}
+          </nav>
+          {listing.folders.length > 0 && (
+            <section className="card-grid folder-grid" aria-label="Folders">
+              {listing.folders.map((folder) => (
+                <FolderCard key={folder.path} folder={folder} search={search} />
+              ))}
+            </section>
+          )}
+          <LibraryWorks
+            search={search}
+            update={update}
+            hideEmpty={listing.works === 0 && listing.folders.length > 0}
+          />
+        </>
+      )}
+    </>
+  );
+}
+function LibraryWorks({
+  search,
+  update,
+  hideEmpty = false,
+}: {
+  search: LibrarySearch;
+  update: (patch: Partial<LibrarySearch>) => void;
+  hideEmpty?: boolean;
+}) {
+  return search.view === "infinite" ? (
+    <InfiniteLibrary key={JSON.stringify({ ...search, page: undefined })} search={search} />
+  ) : (
+    <PagedLibrary search={search} update={update} hideEmpty={hideEmpty} />
   );
 }
 function PagedLibrary({
   search,
   update,
+  hideEmpty,
 }: {
+  hideEmpty: boolean;
   search: LibrarySearch;
   update: (patch: Partial<LibrarySearch>) => void;
 }) {
@@ -316,7 +478,7 @@ function PagedLibrary({
                 <Card key={work.id} work={work} search={search} />
               ))}
             </div>
-            {!result.data.items.length && (
+            {!result.data.items.length && !hideEmpty && (
               <div className="empty">
                 <h2>No matching works</h2>
                 <p>Change the search or ask an administrator to explicitly scan an online root.</p>

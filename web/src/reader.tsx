@@ -32,6 +32,8 @@ import { IconButton } from "./icons.tsx";
 import { ReaderPanel, PageThumbnail, PageIndicator } from "./reader-panels.tsx";
 
 const defaultOrigin: LibrarySearch = {
+  browse: "all",
+  folder: "",
   q: "",
   sort: "recent",
   direction: "desc",
@@ -251,6 +253,7 @@ export default function Reader() {
     sort: origin.sort,
     direction: origin.direction,
     root: origin.root,
+    ...(origin.browse === "folders" && origin.root ? { folder: origin.folder } : {}),
   }).toString();
   const neighbors = useAPI<{ previous: Neighbor | null; next: Neighbor | null }>(
     ["neighbors", workId, neighborQuery],

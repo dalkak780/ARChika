@@ -23,7 +23,7 @@ type searchCursor struct {
 func visibleSQL(alias, root string, u User) (string, []any) {
 	return alias + ".status='online' AND " + root + ".status='online' AND (? OR EXISTS(SELECT 1 FROM grants g WHERE g.user_id=? AND g.root_id=" + alias + ".root_id))", []any{u.Admin, u.ID}
 }
-func catalogFilter(u User, root, q string, ids []string) (string, []any, error) {
+func catalogFilter(u User, root, q string, ids []string, folder *string) (string, []any, error) {
 	n, e := parseQuery(q)
 	if e != nil {
 		return "", nil, e
@@ -39,6 +39,10 @@ func catalogFilter(u User, root, q string, ids []string) (string, []any, error) 
 		s += " AND sa.root_id=?"
 		params = append(params, root)
 	}
+	if folder != nil {
+		s += " AND sa.parent=?"
+		params = append(params, folderParent(*folder))
+	}
 	s += ")"
 	if len(ids) > 0 {
 		if len(ids) > 1000 {
@@ -52,7 +56,7 @@ func catalogFilter(u User, root, q string, ids []string) (string, []any, error) 
 	return s, params, nil
 }
 func (a *App) targetCount(ctx context.Context, u User, root string, ids []string, q string) (int, error) {
-	where, args, e := catalogFilter(u, root, q, ids)
+	where, args, e := catalogFilter(u, root, q, ids, nil)
 	if e != nil {
 		return 0, e
 	}
@@ -61,7 +65,7 @@ func (a *App) targetCount(ctx context.Context, u User, root string, ids []string
 	return n, e
 }
 func (a *App) targetIDs(ctx context.Context, u User, root string, ids []string, q, after string, before int64, limit int) ([]string, error) {
-	where, args, e := catalogFilter(u, root, q, ids)
+	where, args, e := catalogFilter(u, root, q, ids, nil)
 	if e != nil {
 		return nil, e
 	}
@@ -98,13 +102,21 @@ func (a *App) works(w http.ResponseWriter, r *http.Request, u User) {
 		apiError(w, 400, "invalid_page", "Use cursor navigation beyond page 10000")
 		return
 	}
-	where, args, e := catalogFilter(u, root, q, nil)
+	folder, valid := requestFolder(w, r)
+	if !valid {
+		return
+	}
+	where, args, e := catalogFilter(u, root, q, nil, folder)
 	if e != nil {
 		apiError(w, 400, "invalid_query", e.Error())
 		return
 	}
 	generation := a.Generation(r.Context())
-	sum := sha256.Sum256([]byte(u.ID + "\x00" + q + "\x00" + root + "\x00" + sort + "\x00" + direction))
+	folderKey := ""
+	if folder != nil {
+		folderKey = "folder:" + *folder
+	}
+	sum := sha256.Sum256([]byte(u.ID + "\x00" + q + "\x00" + root + "\x00" + sort + "\x00" + direction + "\x00" + folderKey))
 	queryKey := hex.EncodeToString(sum[:16])
 	cursor := searchCursor{}
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
@@ -124,7 +136,7 @@ func (a *App) works(w http.ResponseWriter, r *http.Request, u User) {
 		apiError(w, 503, "database", "Cannot count search results")
 		return
 	}
-	from, params := catalogFrom(u, where, args)
+	from, params := catalogFrom(u, where, args, r.URL.Query().Get("root"), folder)
 	query := "SELECT " + aliasColumns + ",al.title_sort" + from
 	if cursor.ID != "" {
 		operator := ">"
@@ -290,8 +302,12 @@ func catalogOrder(w http.ResponseWriter, r *http.Request) (string, string, strin
 	return sort, column, direction, true
 }
 
-func catalogFrom(u User, where string, args []any) (string, []any) {
+func catalogFrom(u User, where string, args []any, root string, folder *string) (string, []any) {
 	canonical, canonicalArgs := visibleSQL("x", "xr", u)
+	if folder != nil {
+		canonical += " AND x.root_id=? AND x.parent=?"
+		canonicalArgs = append(canonicalArgs, root, folderParent(*folder))
+	}
 	return " FROM works w JOIN aliases al ON al.id=(SELECT x.id FROM aliases x JOIN roots xr ON xr.id=x.root_id WHERE x.work_id=w.id AND " + canonical + " ORDER BY x.root_id,x.path LIMIT 1) JOIN roots r ON r.id=al.root_id WHERE " + where, append(canonicalArgs, args...)
 }
 
@@ -305,12 +321,16 @@ func (a *App) neighbors(w http.ResponseWriter, r *http.Request, u User) {
 	if !ok {
 		return
 	}
-	where, args, e := catalogFilter(u, r.URL.Query().Get("root"), r.URL.Query().Get("q"), nil)
+	folder, valid := requestFolder(w, r)
+	if !valid {
+		return
+	}
+	where, args, e := catalogFilter(u, r.URL.Query().Get("root"), r.URL.Query().Get("q"), nil, folder)
 	if e != nil {
 		apiError(w, 400, "invalid_query", e.Error())
 		return
 	}
-	from, params := catalogFrom(u, where, args)
+	from, params := catalogFrom(u, where, args, r.URL.Query().Get("root"), folder)
 	out := struct {
 		Previous *neighborWork `json:"previous"`
 		Next     *neighborWork `json:"next"`

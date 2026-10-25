@@ -199,7 +199,22 @@ export interface AuditRecord {
 export interface ErrorBody {
   error: { code: string; message: string };
 }
+export interface Folder {
+  name: string;
+  path: string;
+  works: number;
+  cover_work_id: string;
+}
+export interface FolderListing {
+  root_id: string;
+  root_name: string;
+  path: string;
+  works: number;
+  folders: Folder[];
+}
 export interface LibrarySearch {
+  browse: string;
+  folder: string;
   q: string;
   sort: string;
   direction: string;

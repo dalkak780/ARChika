@@ -88,6 +88,8 @@ const library = createRoute({
   getParentRoute: () => root,
   path: "/",
   validateSearch: (search: Partial<Record<keyof LibrarySearch, unknown>> & SearchSchemaInput) => ({
+    browse: search.browse === "folders" ? "folders" : "all",
+    folder: typeof search.folder === "string" ? search.folder.replace(/^\/+|\/+$/g, "") : "",
     q: searchText(search.q || ""),
     sort:
       typeof search.sort === "string" && ["recent", "title", "mtime"].includes(search.sort)
