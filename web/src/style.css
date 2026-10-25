@@ -962,3 +962,40 @@ hr {
     scroll-behavior: auto !important;
   }
 }
+
+.reader-image,
+.reader-backdrop {
+  background: #161b22;
+}
+.reader-backdrop {
+  position: relative;
+  min-height: 65dvh;
+  overflow: hidden;
+}
+.reader-backdrop img {
+  width: 100%;
+  height: 65dvh;
+  object-fit: contain;
+  filter: blur(12px) brightness(0.45);
+}
+.reader-spinner {
+  position: absolute;
+  top: calc(50% - 1rem);
+  left: calc(50% - 1rem);
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid #ffffff40;
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: reader-spin 0.9s linear infinite;
+}
+@keyframes reader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-spinner {
+    animation: none;
+  }
+}

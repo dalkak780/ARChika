@@ -98,23 +98,30 @@ export function keyAction(
 export function gestureAction(
   start: GesturePoint | null,
   end: GesturePoint,
-  { mode = "paged", zoom = 1, viewportWidth = 1000 } = {},
-) {
-  if (
-    !start ||
-    start.cancelled ||
-    start.touches > 1 ||
-    end.touches > 1 ||
-    zoom !== 1 ||
-    start.x < 28 ||
-    start.x > viewportWidth - 28
-  )
-    return null;
+  {
+    mode = "paged",
+    zoom = 1,
+    viewportWidth = 1000,
+    left = 0,
+    width,
+  }: { mode?: string; zoom?: number; viewportWidth?: number; left?: number; width?: number } = {},
+): NavigationAction | "chrome" | null {
+  const zoneWidth = width ?? viewportWidth;
+  if (!start || start.cancelled || start.touches > 1 || end.touches > 1) return null;
   const dx = end.x - start.x,
     dy = end.y - start.y;
-  if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && end.time - start.time < 500) return "chrome";
+  if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && end.time - start.time < 500) {
+    // Taps use left/centre/right zones for mouse, touch and pen alike.
+    if (mode === "scroll" || zoom !== 1 || zoneWidth <= 0) return "chrome";
+    const position = (end.x - left) / zoneWidth;
+    return position < 0.23 ? "previous" : position > 0.77 ? "next" : "chrome";
+  }
+  // Swipes ignore screen edges so OS back/forward gestures keep working.
   if (
     mode === "scroll" ||
+    zoom !== 1 ||
+    start.x < 28 ||
+    start.x > viewportWidth - 28 ||
     end.time - start.time > 1000 ||
     Math.abs(dx) < 55 ||
     Math.abs(dx) < Math.abs(dy) * 1.7

@@ -66,3 +66,7 @@ export async function pageBlob(
     compatible: format === "png",
   };
 }
+
+export function thumbnailURL(workId: string) {
+  return `/api/works/${encodeURIComponent(workId)}/thumbnail`;
+}

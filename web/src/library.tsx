@@ -8,6 +8,8 @@ import { VirtualLibraryRows } from "./virtual.tsx";
 import { trimOldest } from "./lru.ts";
 import { api, APIError, encoded, useAPI, useAction, ErrorNotice, Pending } from "./api.tsx";
 
+import { thumbnailURL } from "./images.ts";
+
 const route = getRouteApi("/");
 export const libraryOrigins = new Map<string, LibrarySearch>();
 const scrollPositions = new Map<string, number>();
@@ -55,7 +57,7 @@ function Card({ work, search }: { work: Work; search: LibrarySearch }) {
             </span>
           ) : (
             <img
-              src={`/api/works/${encoded(work.id)}/thumbnail`}
+              src={thumbnailURL(work.id)}
               loading="lazy"
               decoding="async"
               alt=""

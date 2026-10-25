@@ -13,7 +13,7 @@ import React, {
 import { Link, getRouteApi, useNavigate, useLocation, useRouter } from "@tanstack/react-router";
 import { VirtualContinuousPages } from "./virtual.tsx";
 import { trimOldest } from "./lru.ts";
-import { useAPI, useAction, useAuth, api, encoded, ErrorNotice, Pending } from "./api.tsx";
+import { useAPI, useAction, useAuth, api, encoded, ErrorNotice } from "./api.tsx";
 import {
   visiblePages,
   navigatePage,
@@ -23,7 +23,9 @@ import {
   wide,
   ignoresKeys,
 } from "./navigation.ts";
-import { pageBlob } from "./images.ts";
+import { thumbnailURL } from "./images.ts";
+import { pageCache, pageKey } from "./page-cache.ts";
+import type { CachedPage } from "./page-cache.ts";
 import { libraryOrigins } from "./library.tsx";
 import { WorkMetadata } from "./admin.tsx";
 type OnDimensions = (ordinal: number, width: number, height: number) => void;
@@ -43,6 +45,7 @@ interface ContinuousReaderProps {
   resize: number;
   zoom: number;
   onDimensions: OnDimensions;
+  onLoaded: (page: Page) => void;
   pointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   pointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
   pointerCancel: () => void;
@@ -55,6 +58,55 @@ const readerId =
     value.toString(16).padStart(2, "0"),
   ).join("");
 
+function DelayedSpinner() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(true), 500);
+    return () => clearTimeout(timer);
+  }, []);
+  return visible ? <span className="reader-spinner" aria-hidden="true" /> : null;
+}
+function ReaderBackdrop({ workId }: { workId: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="reader-backdrop" aria-busy="true" aria-label="Loading reader">
+      {!failed && <img src={thumbnailURL(workId)} alt="" onError={() => setFailed(true)} />}
+      <DelayedSpinner />
+    </div>
+  );
+}
+const decodedPages = new WeakSet<CachedPage>();
+async function decodedPage(workId: string, page: Page, width: number, signal: AbortSignal) {
+  const formats = pageCache.get(pageKey(workId, page, width, true)) ? [true] : [false, true];
+  for (const forcePNG of formats) {
+    const key = pageKey(workId, page, width, forcePNG);
+    const release = pageCache.retain(key);
+    let image: CachedPage;
+    try {
+      image = await pageCache.load(workId, page, width, signal, forcePNG);
+    } catch (error) {
+      release();
+      throw error;
+    }
+    try {
+      if (!decodedPages.has(image)) {
+        const decoder = new Image();
+        decoder.src = image.url;
+        await decoder.decode();
+        decodedPages.add(image);
+      }
+      signal.throwIfAborted();
+      return { image, key, release };
+    } catch (error) {
+      release();
+      if (signal.aborted) throw error;
+      if (forcePNG || image.compatible) break;
+    }
+  }
+  throw new Error(
+    "This page could not be decoded, including its compatible representation. Other pages remain available.",
+  );
+}
 function PageImage({
   workId,
   page,
@@ -63,73 +115,75 @@ function PageImage({
   className = "",
   onLoaded,
 }: PageImageProps) {
-  const [image, setImage] = useState<
-      (Awaited<ReturnType<typeof pageBlob>> & { url: string }) | null
-    >(null),
-    [error, setError] = useState<unknown>(null),
+  const [display, setDisplay] = useState<{
+    image: CachedPage;
+    page: Page;
+    key: string;
+    cacheKey: string;
+  } | null>(null);
+  const [error, setError] = useState<unknown>(null),
     [retry, setRetry] = useState(0);
-  const requestController = useRef<AbortController | null>(null),
-    fallbackAttempted = useRef(false);
-  const loadKey = `${workId}/${page.entry_id}/${page.ordinal}/${width}/${retry}`;
+  const loadKey = `${pageKey(workId, page, width)}/${retry}`;
   const [previousLoadKey, setPreviousLoadKey] = useState(loadKey);
   if (previousLoadKey !== loadKey) {
     setPreviousLoadKey(loadKey);
-    setImage(null);
     setError(null);
   }
-  const loadPage = useEffectEvent((signal: AbortSignal) => pageBlob(workId, page, width, signal));
+  const pngKey = pageKey(workId, page, width, true),
+    originalKey = pageKey(workId, page, width);
+  const png = pageCache.get(pngKey),
+    cached = png ?? pageCache.get(originalKey);
+  const image =
+    cached && decodedPages.has(cached)
+      ? { image: cached, page, key: loadKey, cacheKey: png ? pngKey : originalKey }
+      : display;
+  const loading = image?.key !== loadKey;
+  const notifyLoaded = useEffectEvent(() => onLoaded?.());
+  useEffect(() => {
+    if (!loading) notifyLoaded();
+  }, [loading, loadKey]);
+  const displayedKey = image?.cacheKey;
+  useLayoutEffect(() => {
+    if (!displayedKey) return;
+    return pageCache.retain(displayedKey);
+  }, [displayedKey]);
+  const loadPage = useEffectEvent((signal: AbortSignal) =>
+    decodedPage(workId, page, width, signal),
+  );
+  const showPage = useEffectEvent((value: CachedPage, cacheKey: string) =>
+    setDisplay({ image: value, page, key: loadKey, cacheKey }),
+  );
   useEffect(() => {
     const controller = new AbortController();
-    let objectURL: string | undefined;
-    requestController.current = controller;
-    fallbackAttempted.current = false;
-    async function load() {
-      try {
-        const result = await loadPage(controller.signal);
-        if (controller.signal.aborted) return;
-        objectURL = URL.createObjectURL(result.blob);
-        setImage({ ...result, url: objectURL });
-      } catch (error) {
+    let release: (() => void) | undefined;
+    void loadPage(controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) {
+          result.release();
+          return;
+        }
+        release = result.release;
+        showPage(result.image, result.key);
+      })
+      .catch((error: unknown) => {
         if (!controller.signal.aborted) setError(error);
-      }
-    }
-    void load();
+      });
     return () => {
       controller.abort();
-      if (objectURL) URL.revokeObjectURL(objectURL);
+      release?.();
     };
   }, [loadKey]);
-  useEffect(
-    () => () => {
-      if (image?.url) URL.revokeObjectURL(image.url);
-    },
-    [image?.url],
-  );
-  async function decodeError() {
-    if (fallbackAttempted.current || image?.compatible) {
-      setError(
-        new Error(
-          "This page could not be decoded, including its compatible representation. Other pages remain available.",
-        ),
-      );
-      return;
-    }
-    fallbackAttempted.current = true;
-    try {
-      const controller = requestController.current;
-      if (!controller) return;
-      const result = await pageBlob(workId, page, width, controller.signal, true);
-      if (controller.signal.aborted) return;
-      setImage({ ...result, url: URL.createObjectURL(result.blob) });
-    } catch (error) {
-      if (!requestController.current?.signal.aborted) setError(error);
-    }
-  }
   return (
     <figure
       className={`reader-image ${className}`}
+      aria-busy={loading && !error}
       style={{
-        aspectRatio: page.width && page.height ? `${page.width}/${page.height}` : "2/3",
+        aspectRatio:
+          image?.page.width && image.page.height
+            ? `${image.page.width}/${image.page.height}`
+            : page.width && page.height
+              ? `${page.width}/${page.height}`
+              : "2/3",
       }}
     >
       {error ? (
@@ -137,32 +191,31 @@ function PageImage({
           <ErrorNotice error={error} />
           <button onClick={() => setRetry((n) => n + 1)}>Retry page {page.ordinal + 1}</button>
         </div>
-      ) : image ? (
-        <>
-          <img
-            src={image.url}
-            alt={`Page ${page.ordinal + 1}`}
-            draggable="false"
-            onLoad={(event) => {
-              onDimensions(
-                page.ordinal,
-                event.currentTarget.naturalWidth,
-                event.currentTarget.naturalHeight,
-              );
-              onLoaded?.();
-            }}
-            onError={decodeError}
-          />
-          {image.fallback && (
-            <figcaption>
-              Still-frame compatibility representation; animation is not preserved.
-            </figcaption>
-          )}
-        </>
       ) : (
-        <div className="page-loading" role="status">
-          Loading page {page.ordinal + 1}…
-        </div>
+        <>
+          {image && (
+            <>
+              <img
+                src={image.image.url}
+                alt={`Page ${image.page.ordinal + 1}`}
+                draggable="false"
+                onLoad={(event) => {
+                  onDimensions(
+                    image.page.ordinal,
+                    event.currentTarget.naturalWidth,
+                    event.currentTarget.naturalHeight,
+                  );
+                }}
+              />
+              {image.image.fallback && (
+                <figcaption>
+                  Still-frame compatibility representation; animation is not preserved.
+                </figcaption>
+              )}
+            </>
+          )}
+          {loading && <DelayedSpinner key={loadKey} />}
+        </>
       )}
     </figure>
   );
@@ -215,8 +268,22 @@ export default function Reader() {
       })),
     [result.data?.pages, dimensions],
   );
+  const [loaded, setLoaded] = useState<Record<string, boolean>>({});
+  const pageLoaded = useCallback(
+    (page: Page) => {
+      const key = pageKey(workId, page, resize);
+      setLoaded((old) => (old[key] ? old : { ...old, [key]: true }));
+    },
+    [workId, resize],
+  );
   const pageIndex = Math.max(0, Math.min(index, Math.max(0, pages.length - 1)));
   const shown = visiblePages(pages, pageIndex, layout);
+  const readinessKey = JSON.stringify([workId, pageIndex, resize]);
+  const [previousReadinessKey, setPreviousReadinessKey] = useState(readinessKey);
+  if (previousReadinessKey !== readinessKey) {
+    setPreviousReadinessKey(readinessKey);
+    setLoaded({});
+  }
   useEffect(() => {
     if (!pages.length) return;
     positions.set(workId, pageIndex);
@@ -301,6 +368,35 @@ export default function Reader() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [go, mode, metadata, search.immersive]);
+  useEffect(() => () => pageCache.clearWork(workId), [workId]);
+  useEffect(() => {
+    const visible = mode === "scroll" ? [pageIndex] : shown;
+    if (
+      !visible.every((i) => {
+        const page = pages[i];
+        return page && loaded[pageKey(workId, page, resize)];
+      })
+    )
+      return;
+    const controller = new AbortController();
+    const end = visible.at(-1) ?? pageIndex;
+    const ahead = pages.slice(end + 1, end + 1 + (layout === "spread" ? 4 : 2));
+    const previous = pages[pageIndex - 1];
+    if (previous) ahead.push(previous);
+    async function preload() {
+      for (const page of ahead) {
+        if (controller.signal.aborted) return;
+        try {
+          const result = await decodedPage(workId, page, resize, controller.signal);
+          result.release();
+        } catch {
+          // Visible pages expose failures through their retry UI.
+        }
+      }
+    }
+    void preload();
+    return () => controller.abort();
+  }, [workId, pageIndex, mode, layout, shown, pages, resize, loaded]);
   const prefetchPage = useEffectEvent(() => pages[pageIndex]?.ordinal);
   useEffect(() => {
     const ordinal = prefetchPage();
@@ -395,6 +491,7 @@ export default function Reader() {
       window.getSelection()?.toString()
     )
       return;
+    const bounds = surface.current?.getBoundingClientRect();
     const action = gestureAction(
       start,
       {
@@ -407,14 +504,11 @@ export default function Reader() {
         mode,
         zoom: zoom * (window.visualViewport?.scale || 1),
         viewportWidth: window.innerWidth,
+        left: bounds?.left ?? 0,
+        width: bounds?.width ?? window.innerWidth,
       },
     );
-    const element = surface.current;
-    if (action === "chrome" && start.type === "mouse" && mode !== "scroll" && element) {
-      const bounds = element.getBoundingClientRect(),
-        position = (event.clientX - bounds.left) / bounds.width;
-      go(position < 0.23 ? "previous" : position > 0.77 ? "next" : "chrome");
-    } else if (action) go(action);
+    if (action) go(action);
   }
   const zoomStyle: CSSProperties & { "--zoom": number } = { "--zoom": zoom };
   const origin = libraryOrigins.get(workId),
@@ -571,7 +665,7 @@ export default function Reader() {
       </button>
       {fullscreenError && <p className="notice">{fullscreenError}</p>}
       <ErrorNotice error={result.error || action.error} />
-      {result.isPending && <Pending>Indexing pages on demand…</Pending>}
+      {result.isPending && <ReaderBackdrop key={workId} workId={workId} />}
       {metadata && (
         <section className="metadata-panel panel" role="dialog" aria-label="Work metadata">
           <button onClick={() => setMetadata(false)}>Close metadata</button>
@@ -601,6 +695,7 @@ export default function Reader() {
               resize={resize}
               zoom={zoom}
               onDimensions={dimensionsLoaded}
+              onLoaded={pageLoaded}
               pointerDown={pointerDown}
               pointerUp={pointerUp}
               pointerCancel={pointerCancel}
@@ -614,15 +709,16 @@ export default function Reader() {
               onLostPointerCapture={pointerCancel}
             >
               <div className={`spread ${shown.length === 2 ? "two" : ""}`} style={zoomStyle}>
-                {shown.map((i) => {
+                {shown.map((i, slot) => {
                   const page = pages[i];
                   return page ? (
                     <PageImage
-                      key={`${workId}-${page.entry_id}-${page.ordinal}`}
+                      key={`${workId}-${slot}`}
                       workId={workId}
                       page={page}
                       width={resize}
                       onDimensions={dimensionsLoaded}
+                      onLoaded={() => pageLoaded(page)}
                     />
                   ) : null;
                 })}
@@ -708,6 +804,7 @@ function ContinuousReader(props: ContinuousReaderProps) {
           page={page}
           width={props.resize}
           onDimensions={props.onDimensions}
+          onLoaded={() => props.onLoaded(page)}
         />
       )}
     />

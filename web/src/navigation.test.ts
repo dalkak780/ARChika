@@ -77,3 +77,17 @@ test("horizontal swipe only; vertical, pinch, zoom and OS edge gestures are unto
   assert.equal(gestureAction(start, end, { zoom: 2 }), null);
   assert.equal(gestureAction(start, end, { mode: "scroll" }), null);
 });
+test("taps use left, centre and right zones for every pointer type", () => {
+  const tap = (x: number) => ({ x, y: 300, time: 0, touches: 1 });
+  const at = (x: number) => ({ x, y: 302, time: 120, touches: 1 });
+  const zones = { viewportWidth: 1000, left: 0, width: 1000 };
+  assert.equal(gestureAction(tap(100), at(102), zones), "previous");
+  assert.equal(gestureAction(tap(500), at(500), zones), "chrome");
+  assert.equal(gestureAction(tap(900), at(898), zones), "next");
+  assert.equal(gestureAction(tap(10), at(10), zones), "previous");
+  assert.equal(gestureAction(tap(995), at(995), zones), "next");
+  assert.equal(gestureAction(tap(900), at(900), { ...zones, left: 600, width: 400 }), "chrome");
+  assert.equal(gestureAction(tap(900), at(900), { ...zones, zoom: 2 }), "chrome");
+  assert.equal(gestureAction(tap(900), at(900), { ...zones, mode: "scroll" }), "chrome");
+  assert.equal(gestureAction(tap(900), { ...at(900), time: 800 }, zones), null);
+});
