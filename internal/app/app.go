@@ -126,13 +126,13 @@ func New(c Config) (*App, error) {
 	a.dataLock = dataLock
 	a.thumbnails = make(chan struct{}, min(c.Workers, 2))
 	a.thumbnailQueue = make(chan struct{}, 64)
-	a.cache, e = NewPageCache(c.CacheDir, c.MemoryBytes, c.DiskBytes, c.PageBytes)
+	a.cache, e = NewPageCache(c.CacheDir, int64(c.MemoryBytes), int64(c.DiskBytes), int64(c.PageBytes))
 	if e != nil {
 		db.Close()
 		cancel()
 		return nil, e
 	}
-	a.sessions = NewArchivePool(c.Workers+2, c.PageBytes)
+	a.sessions = NewArchivePool(c.Workers+2, int64(c.PageBytes))
 	a.crawler, e = NewCrawler(a)
 	if e != nil {
 		a.cache.Close()

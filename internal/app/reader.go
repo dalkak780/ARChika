@@ -91,7 +91,7 @@ func (a *App) loadPage(ctx context.Context, u User, al Alias, p ar.Entry, t Tran
 				b = raw.b
 				raw.b = nil
 			} else {
-				b, e = boundedRead(shared, stream, a.Config.PageBytes)
+				b, e = boundedRead(shared, stream, int64(a.Config.PageBytes))
 				if e != nil {
 					return e
 				}
@@ -124,7 +124,7 @@ func (a *App) loadPage(ctx context.Context, u User, al Alias, p ar.Entry, t Tran
 				return PageValue{}, shared.Err()
 			}
 			defer func() { <-a.transform }()
-			return processImage(shared, v, t, a.Config.MaxPixels, a.Config.PageBytes, false)
+			return processImage(shared, v, t, a.Config.MaxPixels, int64(a.Config.PageBytes), false)
 		})
 	}
 	if e != nil {
@@ -255,7 +255,7 @@ func (a *App) thumbnail(ctx context.Context, u User, al Alias) (PageValue, strin
 		}
 		if status == "ready" {
 			b, e := os.ReadFile(file)
-			if e == nil && int64(len(b)) <= a.Config.PageBytes {
+			if e == nil && int64(len(b)) <= int64(a.Config.PageBytes) {
 				return PageValue{Bytes: b, MIME: "image/png"}, key, nil
 			}
 		}

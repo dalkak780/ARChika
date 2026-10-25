@@ -10,9 +10,9 @@ roots:
     watch: false
     auto_crawl: false
     quiet_seconds: 3
-memory_bytes: 67108864
-disk_bytes: 1073741824
-page_bytes: 67108864
+memory_bytes: 64MiB
+disk_bytes: 1GiB
+page_bytes: 64MiB
 workers: 2
 max_pixels: 64000000
 scan_per_second: 200

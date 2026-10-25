@@ -28,9 +28,9 @@ type Config struct {
 	CacheDir        string         `json:"cache_dir"`
 	AllowedPaths    []string       `json:"allowed_paths"`
 	Roots           []RootConfig   `json:"roots"`
-	MemoryBytes     int64          `json:"memory_bytes"`
-	DiskBytes       int64          `json:"disk_bytes"`
-	PageBytes       int64          `json:"page_bytes"`
+	MemoryBytes     ByteSize       `json:"memory_bytes"`
+	DiskBytes       ByteSize       `json:"disk_bytes"`
+	PageBytes       ByteSize       `json:"page_bytes"`
 	Workers         int            `json:"workers"`
 	SessionHours    int            `json:"session_hours"`
 	Password        PasswordPolicy `json:"password"`
