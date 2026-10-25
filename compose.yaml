@@ -11,6 +11,8 @@ services:
     environment:
       ARCHIKA_CONFIG: /config/archika.yaml
       ARCHIKA_MASTER_KEY: "${ARCHIKA_MASTER_KEY:-}"
+      # ARCHIKA_INITIAL_ADMIN_NAME: admin
+      # ARCHIKA_INITIAL_ADMIN_PASSWORD_FILE: /run/secrets/initial_admin_password
       GOMAXPROCS: "2"
     cap_drop:
       - ALL

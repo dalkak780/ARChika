@@ -12,12 +12,13 @@ import (
 )
 
 type User struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Admin       bool           `json:"admin"`
-	CSRF        string         `json:"csrf,omitempty"`
-	Preferences map[string]any `json:"preferences,omitempty"`
-	scope       string
+	MustChangePassword bool           `json:"must_change_password"`
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Admin              bool           `json:"admin"`
+	CSRF               string         `json:"csrf,omitempty"`
+	Preferences        map[string]any `json:"preferences,omitempty"`
+	scope              string
 }
 type Root struct {
 	ID            string   `json:"id"`

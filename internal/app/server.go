@@ -14,6 +14,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("GET /api/auth/me", a.authenticated(false, func(w http.ResponseWriter, r *http.Request, u User) { jsonResponse(w, 200, u) }))
+	mux.HandleFunc("POST /api/auth/password", a.authenticated(false, a.changePassword))
 	mux.HandleFunc("POST /api/auth/logout", a.authenticated(false, a.logout))
 	mux.HandleFunc("PUT /api/preferences", a.authenticated(false, a.preferences))
 	mux.HandleFunc("GET /api/roots", a.authenticated(false, a.roots))

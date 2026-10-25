@@ -83,7 +83,13 @@ func checkPassword(encoded, password string, policy PasswordPolicy) bool {
 	got := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, 32)
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
+
+var errAccountsExist = errors.New("bootstrap refused: accounts already exist; use authenticated administration")
+
 func BootstrapAdmin(db *sql.DB, name, password string, policy PasswordPolicy) error {
+	return bootstrapAdmin(db, name, password, policy, false)
+}
+func bootstrapAdmin(db *sql.DB, name, password string, policy PasswordPolicy, mustChange bool) error {
 	if !validName(name) {
 		return errors.New("account name must be 1–80 non-control characters")
 	}
@@ -101,9 +107,9 @@ func BootstrapAdmin(db *sql.DB, name, password string, policy PasswordPolicy) er
 		return e
 	}
 	if n != 0 {
-		return errors.New("bootstrap refused: accounts already exist; use authenticated administration")
+		return errAccountsExist
 	}
-	_, e = tx.Exec("INSERT INTO users(id,name,password,admin) VALUES(?,?,?,1)", id(), name, hash)
+	_, e = tx.Exec("INSERT INTO users(id,name,password,admin,must_change_password) VALUES(?,?,?,1,?)", id(), name, hash, mustChange)
 	if e != nil {
 		return e
 	}
@@ -128,7 +134,7 @@ func (a *App) User(r *http.Request) (User, error) {
 		return u, errors.New("sign in required")
 	}
 	var prefs string
-	e = a.DB.QueryRowContext(r.Context(), "SELECT u.id,u.name,u.admin,s.csrf,u.preferences FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.disabled=0", tokenHash(cookie.Value), now()).Scan(&u.ID, &u.Name, &u.Admin, &u.CSRF, &prefs)
+	e = a.DB.QueryRowContext(r.Context(), "SELECT u.id,u.name,u.admin,s.csrf,u.preferences,u.must_change_password FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.disabled=0", tokenHash(cookie.Value), now()).Scan(&u.ID, &u.Name, &u.Admin, &u.CSRF, &prefs, &u.MustChangePassword)
 	if e != nil {
 		return u, errors.New("sign in required")
 	}
@@ -170,6 +176,10 @@ func (a *App) authenticated(admin bool, fn func(http.ResponseWriter, *http.Reque
 			apiError(w, 401, "unauthorized", "Sign in required")
 			return
 		}
+		if u.MustChangePassword && !(r.Method == "GET" && r.URL.Path == "/api/auth/me" || r.Method == "POST" && (r.URL.Path == "/api/auth/logout" || r.URL.Path == "/api/auth/password")) {
+			apiError(w, 403, "password_change_required", "Change your password before continuing")
+			return
+		}
 		if admin && !u.Admin {
 			apiError(w, 403, "forbidden", "Administrator permission required")
 			return
@@ -196,48 +206,13 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "invalid_request", e.Error())
 		return
 	}
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if ip, e := netip.ParseAddr(host); e == nil {
-		ip = ip.Unmap()
-		if ip.Is6() {
-			host = netip.PrefixFrom(ip, 64).Masked().String()
-		} else {
-			host = ip.String()
-		}
-	}
-	a.authMu.Lock()
-	at := time.Now()
-	v, tracked := a.loginAttempts[host]
-	if at.Sub(v.At) > time.Minute {
-		v = loginAttempt{At: at}
-	}
-	v.Count++
-	for !tracked && len(a.loginAttempts) >= 10000 {
-		var oldestHost string
-		var oldestAt time.Time
-		for k, attempt := range a.loginAttempts {
-			if at.Sub(attempt.At) > time.Minute {
-				delete(a.loginAttempts, k)
-				continue
-			}
-			if oldestAt.IsZero() || attempt.At.Before(oldestAt) {
-				oldestHost, oldestAt = k, attempt.At
-			}
-		}
-		if len(a.loginAttempts) >= 10000 {
-			delete(a.loginAttempts, oldestHost)
-		}
-	}
-	a.loginAttempts[host] = v
-	a.authMu.Unlock()
-	if v.Count > 10 {
-		apiError(w, 429, "rate_limited", "Try again in a minute")
+	if !a.allowPasswordAttempt(w, r) {
 		return
 	}
 	var u User
 	var hash, prefs string
 	var disabled bool
-	e := a.DB.QueryRowContext(r.Context(), "SELECT id,name,password,admin,disabled,preferences FROM users WHERE name=?", in.Name).Scan(&u.ID, &u.Name, &hash, &u.Admin, &disabled, &prefs)
+	e := a.DB.QueryRowContext(r.Context(), "SELECT id,name,password,admin,disabled,preferences,must_change_password FROM users WHERE name=?", in.Name).Scan(&u.ID, &u.Name, &hash, &u.Admin, &disabled, &prefs, &u.MustChangePassword)
 	if e != nil || disabled {
 		hash = fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", a.Config.Password.MemoryKiB, a.Config.Password.Iterations, a.Config.Password.Parallelism)
 	}
@@ -450,4 +425,46 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, u User) {
 	}
 	a.cancelPrefetch("")
 	jsonResponse(w, 200, map[string]any{"ok": true, "id": uid})
+}
+
+func (a *App) allowPasswordAttempt(w http.ResponseWriter, r *http.Request) bool {
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip, e := netip.ParseAddr(host); e == nil {
+		ip = ip.Unmap()
+		if ip.Is6() {
+			host = netip.PrefixFrom(ip, 64).Masked().String()
+		} else {
+			host = ip.String()
+		}
+	}
+	a.authMu.Lock()
+	at := time.Now()
+	v, tracked := a.loginAttempts[host]
+	if at.Sub(v.At) > time.Minute {
+		v = loginAttempt{At: at}
+	}
+	v.Count++
+	for !tracked && len(a.loginAttempts) >= 10000 {
+		var oldestHost string
+		var oldestAt time.Time
+		for k, attempt := range a.loginAttempts {
+			if at.Sub(attempt.At) > time.Minute {
+				delete(a.loginAttempts, k)
+				continue
+			}
+			if oldestAt.IsZero() || attempt.At.Before(oldestAt) {
+				oldestHost, oldestAt = k, attempt.At
+			}
+		}
+		if len(a.loginAttempts) >= 10000 {
+			delete(a.loginAttempts, oldestHost)
+		}
+	}
+	a.loginAttempts[host] = v
+	a.authMu.Unlock()
+	if v.Count > 10 {
+		apiError(w, 429, "rate_limited", "Try again in a minute")
+		return false
+	}
+	return true
 }

@@ -46,7 +46,13 @@ export async function api<T = unknown>(
     csrf = "";
     for (const client of authClients) client.setQueryData(["me"], null);
   }
-  if (!response.ok) throw new APIError(response.status, value);
+  if (!response.ok) {
+    const error = new APIError(response.status, value);
+    if (error.status === 403 && error.code === "password_change_required") {
+      for (const client of authClients) void client.invalidateQueries({ queryKey: ["me"] });
+    }
+    throw error;
+  }
   // The caller supplies the response contract from the Go handler.
   return value as T;
 }
@@ -161,7 +167,17 @@ export function Auth({ children }: { children: ReactNode }) {
         },
       }}
     >
-      {children}
+      {me.data.must_change_password ? (
+        <main className="login">
+          <div className="panel">
+            <h1>Change password</h1>
+            <p>Choose a new password to continue.</p>
+            <ChangePassword />
+          </div>
+        </main>
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   );
 }
@@ -209,10 +225,81 @@ function Login({ error, onLogin }: { error: unknown; onLogin: (user: User) => vo
         </form>
         <ErrorNotice error={failure || error} />
         <p className="muted small">
-          First installation? An administrator must create the first account using the server
-          bootstrap CLI. There is no default password.
+          First installation? Find the one-time administrator password in the server logs, unless
+          you configured an initial password.
         </p>
       </div>
     </main>
+  );
+}
+
+export function ChangePassword() {
+  const client = useQueryClient();
+  const [failure, setFailure] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const value = data.get("new_password");
+    const password = typeof value === "string" ? value : "";
+    setSaved(false);
+    setFailure(null);
+    if (new TextEncoder().encode(password).length < 12) {
+      setFailure(new Error("Use at least 12 bytes for the new password."));
+      return;
+    }
+    if (password !== data.get("confirm_password")) {
+      setFailure(new Error("New passwords must match."));
+      return;
+    }
+    setBusy(true);
+    try {
+      const user = await api<User>("/auth/password", {
+        method: "POST",
+        body: { current_password: data.get("current_password"), new_password: password },
+      });
+      client.setQueryData(["me"], user);
+      form.reset();
+      setSaved(true);
+    } catch (error) {
+      setFailure(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form onSubmit={submit}>
+      <label>
+        Current password
+        <input name="current_password" type="password" autoComplete="current-password" required />
+      </label>
+      <label>
+        New password
+        <input
+          name="new_password"
+          type="password"
+          autoComplete="new-password"
+          minLength={12}
+          required
+        />
+      </label>
+      <label>
+        Confirm new password
+        <input
+          name="confirm_password"
+          type="password"
+          autoComplete="new-password"
+          minLength={12}
+          required
+        />
+      </label>
+      <button className="primary" disabled={busy}>
+        {busy ? "Saving…" : "Change password"}
+      </button>
+      <ErrorNotice error={failure} />
+      {saved && <p role="status">Password changed. Other sessions have been signed out.</p>}
+    </form>
   );
 }

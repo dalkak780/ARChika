@@ -19,13 +19,23 @@ export DATA_PATH="$PWD/data" CACHE_PATH="$PWD/cache"
 docker compose build
 ```
 
-Create the first administrator before starting the service. There is no default password and no public sign-up, and the password is read from stdin so it doesn't end up in your shell history:
+Start the service and read the initial administrator password:
+
+```sh
+docker compose up -d
+docker compose logs archika
+```
+
+On first start, if no accounts exist, ARChika creates `admin` and prints a one-time password to the logs. You must change it at first sign-in. The password is not shown again.
+
+To supply your own password, set `ARCHIKA_INITIAL_ADMIN_PASSWORD_FILE` to a mounted Docker secret file, or set `ARCHIKA_INITIAL_ADMIN_PASSWORD`. The file takes precedence; one trailing newline is removed. Passwords must be 12–1024 bytes. Set `ARCHIKA_INITIAL_ADMIN_NAME` to choose a name other than `admin`. A supplied password does not require a change at first sign-in. These settings apply only when no accounts exist.
+
+Optionally, create the administrator via stdin before the first start:
 
 ```sh
 read -rs ARCHIKA_INITIAL_PASSWORD
 printf '%s\n' "$ARCHIKA_INITIAL_PASSWORD" | docker compose run --rm -T archika admin --name admin
 unset ARCHIKA_INITIAL_PASSWORD
-docker compose up -d
 ```
 
 Then open the UI and run **Administration → Jobs → Discover / scan**. ARChika never scans on its own at startup or when you add a root, so the library stays empty until you run this.

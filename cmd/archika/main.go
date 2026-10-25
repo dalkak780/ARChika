@@ -92,6 +92,9 @@ func run() error {
 		return e
 	}
 	defer a.Close()
+	if e = app.EnsureInitialAdmin(a.DB, c.Password, slog.Default()); e != nil {
+		return e
+	}
 	listener, e := net.Listen("tcp", c.Listen)
 	if e != nil {
 		return e

@@ -14,7 +14,7 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,password TEXT NOT NULL,admin INTEGER NOT NULL DEFAULT 0,disabled INTEGER NOT NULL DEFAULT 0,preferences TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,password TEXT NOT NULL,admin INTEGER NOT NULL DEFAULT 0,disabled INTEGER NOT NULL DEFAULT 0,preferences TEXT NOT NULL DEFAULT '{}',must_change_password INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf TEXT NOT NULL,expires INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS roots(id TEXT PRIMARY KEY,bootstrap_key TEXT UNIQUE,name TEXT NOT NULL,path TEXT NOT NULL UNIQUE,watch INTEGER NOT NULL DEFAULT 0,auto_crawl INTEGER NOT NULL DEFAULT 0,providers TEXT NOT NULL DEFAULT '[]',quiet_seconds INTEGER NOT NULL DEFAULT 3,parser_enabled INTEGER NOT NULL DEFAULT 1,parser_regex TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'online',pending_path TEXT NOT NULL DEFAULT '',warning TEXT NOT NULL DEFAULT '',checked_at INTEGER NOT NULL DEFAULT 0,trust_identity INTEGER NOT NULL DEFAULT 1);
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS scan_dirs(job_id TEXT NOT NULL REFERENCES jobs(id) ON
 CREATE TABLE IF NOT EXISTS scan_seen(job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,physical_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(job_id,physical_key));
 CREATE TABLE IF NOT EXISTS watch_events(root_id TEXT NOT NULL,path TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'change',observed INTEGER NOT NULL,PRIMARY KEY(root_id,path));
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,root_id TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL,created INTEGER NOT NULL);
- PRAGMA user_version=2;
+ PRAGMA user_version=3;
 `
 
 func OpenDB(c Config) (*sql.DB, error) {
@@ -80,7 +80,7 @@ func OpenDB(c Config) (*sql.DB, error) {
 	if e = db.QueryRow("PRAGMA user_version").Scan(&version); e != nil {
 		return nil, e
 	}
-	if version > 2 {
+	if version > 3 {
 		return nil, fmt.Errorf("database schema %d is newer than supported", version)
 	}
 	if version == 1 {
@@ -89,6 +89,22 @@ func OpenDB(c Config) (*sql.DB, error) {
 			return nil, err
 		}
 		_, err = tx.Exec("ALTER TABLE works ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0; DROP TRIGGER IF EXISTS alias_update; DROP TRIGGER IF EXISTS alias_tags_update; PRAGMA user_version=2")
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+		if err != nil {
+			return nil, err
+		}
+		version = 2
+	}
+	if version == 2 {
+		tx, err := db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3")
 		if err == nil {
 			err = tx.Commit()
 		} else {

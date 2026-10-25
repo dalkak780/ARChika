@@ -12,7 +12,7 @@ import {
   Link,
   useRouterState,
 } from "@tanstack/react-router";
-import { Auth, useAuth, ErrorNotice, APIError } from "./api.tsx";
+import { Auth, useAuth, ErrorNotice, APIError, ChangePassword } from "./api.tsx";
 import Library from "./library.tsx";
 import Reader from "./reader.tsx";
 import Admin from "./admin.tsx";
@@ -51,6 +51,12 @@ function Shell() {
             <button onClick={() => logout().catch(setError)}>Sign out</button>
           </nav>
         </header>
+      )}
+      {!reader && (
+        <details className="panel">
+          <summary>Account: change password</summary>
+          <ChangePassword />
+        </details>
       )}
       <ErrorNotice error={error} />
       <Outlet />

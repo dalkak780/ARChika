@@ -9,6 +9,7 @@ export interface User {
   id: string;
   name: string;
   admin: boolean;
+  must_change_password: boolean;
   csrf?: string;
   preferences?: Preferences;
 }
