@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -98,6 +99,7 @@ func OpenDB(c Config) (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
+		slog.Info("database migrated", "from", 1, "to", 2)
 		version = 2
 	}
 	if version == 2 {
@@ -114,6 +116,7 @@ func OpenDB(c Config) (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
+		slog.Info("database migrated", "from", 2, "to", 3)
 		version = 3
 	}
 	if version == 3 {
@@ -121,7 +124,14 @@ func OpenDB(c Config) (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = tx.Exec("UPDATE works SET index_status='stale',error_code='',error_message='' WHERE index_status='error' AND error_code IN ('corrupt','encrypted_or_password_required','unknown'); PRAGMA user_version=4")
+		result, err := tx.Exec("UPDATE works SET index_status='stale',error_code='',error_message='' WHERE index_status='error' AND error_code IN ('corrupt','encrypted_or_password_required','unknown')")
+		var reset int64
+		if err == nil {
+			reset, err = result.RowsAffected()
+		}
+		if err == nil {
+			_, err = tx.Exec("PRAGMA user_version=4")
+		}
 		if err == nil {
 			err = tx.Commit()
 		} else {
@@ -131,6 +141,7 @@ func OpenDB(c Config) (*sql.DB, error) {
 			return nil, err
 		}
 		version = 4
+		slog.Info("database migrated", "from", 3, "to", 4, "stale", reset)
 	}
 	if version == 4 {
 		// Leading-slash entry names and .jfif pages made some archives look empty.
@@ -138,7 +149,14 @@ func OpenDB(c Config) (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = tx.Exec("UPDATE works SET index_status='stale',error_code='',error_message='' WHERE index_status='error' AND error_code IN ('unsupported_format','encrypted_or_password_required'); PRAGMA user_version=5")
+		result, err := tx.Exec("UPDATE works SET index_status='stale',error_code='',error_message='' WHERE index_status='error' AND error_code IN ('unsupported_format','encrypted_or_password_required')")
+		var reset int64
+		if err == nil {
+			reset, err = result.RowsAffected()
+		}
+		if err == nil {
+			_, err = tx.Exec("PRAGMA user_version=5")
+		}
 		if err == nil {
 			err = tx.Commit()
 		} else {
@@ -147,9 +165,13 @@ func OpenDB(c Config) (*sql.DB, error) {
 		if err != nil {
 			return nil, err
 		}
+		slog.Info("database migrated", "from", 4, "to", 5, "stale", reset)
 	}
 	if _, e = db.Exec(schema); e != nil {
 		return nil, e
+	}
+	if version == 0 {
+		slog.Info("database migrated", "from", 0, "to", 5)
 	}
 	if _, e = db.Exec(scanSchema); e != nil {
 		return nil, e

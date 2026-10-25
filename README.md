@@ -26,6 +26,8 @@ docker compose up -d
 docker compose logs archika
 ```
 
+Server logs go to stderr. Set `ARCHIKA_LOG_LEVEL` to `debug`, `info` (default), `warn`, or `error`, and `ARCHIKA_LOG_FORMAT` to `text` (default) or `json`. Invalid values stop startup. Logs are for administrators; request queries and credentials are omitted.
+
 On first start, if no accounts exist, ARChika creates `admin` and prints a one-time password to the logs. You must change it at first sign-in. The password is not shown again.
 
 To supply your own password, set `ARCHIKA_INITIAL_ADMIN_PASSWORD_FILE` to a mounted Docker secret file, or set `ARCHIKA_INITIAL_ADMIN_PASSWORD`. The file takes precedence; one trailing newline is removed. Passwords must be 12–1024 bytes. Set `ARCHIKA_INITIAL_ADMIN_NAME` to choose a name other than `admin`. A supplied password does not require a change at first sign-in. These settings apply only when no accounts exist.

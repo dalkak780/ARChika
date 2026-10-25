@@ -177,7 +177,7 @@ func (a *App) rootWrite(w http.ResponseWriter, r *http.Request, u User) {
 		_, e = tx.Exec("UPDATE roots SET status='online',checked_at=? WHERE id=?", now(), in.ID)
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "root.update", in.ID, map[string]any{"watch": in.Watch, "pending": pending})
 	}
 	if e != nil {
 		apiError(w, 409, "root_conflict", "Root key or path conflicts with an existing root")
@@ -268,7 +268,7 @@ func (a *App) relocation(w http.ResponseWriter, r *http.Request, u User) {
 			e = bump(tx)
 		}
 		if e == nil {
-			e = tx.Commit()
+			e = a.commitAdmin(tx, u.ID, "root.reconcile", root.ID, map[string]string{"job": jid})
 		}
 		if e != nil {
 			apiError(w, 503, "database", "Cannot schedule reconciliation")
@@ -297,7 +297,7 @@ func (a *App) relocation(w http.ResponseWriter, r *http.Request, u User) {
 		e = bump(tx)
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "root.force_approve", root.ID, map[string]string{"mode": "force"})
 	}
 	if e != nil {
 		apiError(w, 503, "database", "Cannot approve relocation")
@@ -340,7 +340,7 @@ func (a *App) rootDelete(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "root.remove", rid, map[string]int{"aliases": aliases, "grants": grants})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "root.remove", rid, map[string]int{"aliases": aliases, "grants": grants})
 	}
 	if e != nil {
 		apiError(w, 503, "database", "Cannot remove root")
@@ -441,7 +441,7 @@ func (a *App) configApply(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "config.apply", "", in.Keys)
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "config.apply", "", in.Keys)
 	}
 	if e != nil {
 		apiError(w, 409, "config_conflict", "Configuration import rejected")

@@ -26,7 +26,36 @@ func main() {
 		os.Exit(1)
 	}
 }
+func setupLogger() error {
+	level := slog.LevelInfo
+	switch os.Getenv("ARCHIKA_LOG_LEVEL") {
+	case "", "info":
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		return errors.New("invalid ARCHIKA_LOG_LEVEL: expected debug, info, warn or error")
+	}
+	options := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	switch os.Getenv("ARCHIKA_LOG_FORMAT") {
+	case "", "text":
+		handler = slog.NewTextHandler(os.Stderr, options)
+	case "json":
+		handler = slog.NewJSONHandler(os.Stderr, options)
+	default:
+		return errors.New("invalid ARCHIKA_LOG_FORMAT: expected text or json")
+	}
+	slog.SetDefault(slog.New(handler))
+	return nil
+}
 func run() error {
+	if e := setupLogger(); e != nil {
+		return e
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "decoder":
@@ -91,7 +120,13 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	defer a.Close()
+	defer func() {
+		if e := a.Close(); e != nil {
+			slog.Error("close failed", "error", e)
+		} else {
+			slog.Info("ARChika stopped")
+		}
+	}()
 	if e = app.EnsureInitialAdmin(a.DB, c.Password, slog.Default()); e != nil {
 		return e
 	}
@@ -112,7 +147,8 @@ func run() error {
 		if e != http.ErrServerClosed {
 			return e
 		}
-	case <-signals:
+	case signal := <-signals:
+		slog.Info("ARChika stopping", "signal", signal.String())
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(ctx)

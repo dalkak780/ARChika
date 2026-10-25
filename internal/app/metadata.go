@@ -276,7 +276,7 @@ func (a *App) metadataHTTP(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "metadata.edit", "", map[string]string{"work": work})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "metadata.edit", "", map[string]string{"work": work})
 	}
 	if e != nil {
 		apiError(w, 400, "invalid_metadata", "Metadata update rejected")
@@ -352,5 +352,5 @@ func (c *Crawler) commitResult(ctx context.Context, work, provider string, resul
 	if e = audit(tx, actor, "metadata.provider_commit", "", map[string]string{"work": work, "provider": provider}); e != nil {
 		return e
 	}
-	return tx.Commit()
+	return c.app.commitAdmin(tx, actor, "metadata.provider_commit", "", map[string]string{"work": work, "provider": provider})
 }

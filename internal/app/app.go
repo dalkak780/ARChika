@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,6 +105,23 @@ type indexFlight struct {
 }
 
 func New(c Config) (*App, error) {
+	level := os.Getenv("ARCHIKA_LOG_LEVEL")
+	if level == "" {
+		level = "info"
+	}
+	engine := "pure"
+	if strings.HasPrefix(newImageProcessor().Version(), "govips") {
+		engine = "vips"
+	}
+	attrs := []any{"data_dir", c.DataDir, "cache_dir", c.CacheDir, "workers", c.Workers, "image_engine", engine, "log_level", level}
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range build.Settings {
+			if setting.Key == "vcs.revision" {
+				attrs = append(attrs, "revision", setting.Value)
+			}
+		}
+	}
+	slog.Info("ARChika starting", attrs...)
 	dataLock, e := LockDirectory(c.DataDir)
 	if e != nil {
 		return nil, e
@@ -146,6 +165,29 @@ func New(c Config) (*App, error) {
 	return a, nil
 }
 func (a *App) Start() {
+	rows, e := a.DB.Query("SELECT " + rootColumns + " FROM roots ORDER BY id")
+	if e == nil {
+		roots := []Root{}
+		for rows.Next() {
+			if root, err := scanRoot(rows); err == nil {
+				roots = append(roots, root)
+			}
+		}
+		rows.Close()
+		for _, root := range roots {
+			reachable := false
+			if r, err := os.OpenRoot(root.Path); err == nil {
+				reachable, _ = a.rootWitness(a.ctx, root, r)
+				r.Close()
+			}
+			attrs := []any{"root", root.ID, "name", root.Name, "path", root.Path, "watch", root.Watch, "reachable", reachable}
+			if reachable {
+				a.Log.Info("root configured", attrs...)
+			} else {
+				a.Log.Warn("root unavailable", attrs...)
+			}
+		}
+	}
 	a.wg.Add(3)
 	go func() { defer a.wg.Done(); a.jobLoop() }()
 	go func() { defer a.wg.Done(); a.watchLoop() }()

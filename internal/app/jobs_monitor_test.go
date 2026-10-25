@@ -95,7 +95,7 @@ func waitForJobState(t *testing.T, a *App, jid, want string) {
 
 func TestJobMonitorKeepsRunningWhenDatabaseBusy(t *testing.T) {
 	records := make(chan slog.Record, 8)
-	log := slog.New(jobMonitorLog{Handler: slog.NewTextHandler(io.Discard, nil), records: records})
+	log := slog.New(jobMonitorLog{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}), records: records})
 	a, jid, f, ctx := startWaitingIndexJob(t, log)
 	if _, e := a.DB.Exec("PRAGMA journal_mode=DELETE; PRAGMA busy_timeout=1"); e != nil {
 		t.Fatal(e)

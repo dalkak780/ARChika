@@ -225,6 +225,17 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	valid := checkPassword(hash, in.Password, a.Config.Password)
 	<-passwordSlots
 	if !valid || e != nil || disabled {
+		reason := "wrong_password"
+		attrs := []any{"remote", passwordRemote(r)}
+		if e != nil {
+			reason = "unknown_account"
+		} else {
+			attrs = append(attrs, "user", u.Name)
+			if disabled {
+				reason = "disabled"
+			}
+		}
+		a.Log.Warn("sign-in failed", append(attrs, "reason", reason)...)
 		apiError(w, 401, "invalid_credentials", "Invalid account or password")
 		return
 	}
@@ -248,6 +259,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 503, "database", "Sign in temporarily unavailable")
 		return
 	}
+	a.Log.Info("sign-in succeeded", "user", u.Name, "remote", passwordRemote(r))
 	http.SetCookie(w, &http.Cookie{Name: "archika_session", Value: secret, Path: "/", HttpOnly: true, Secure: a.Config.SecureCookies || r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: a.Config.SessionHours * 3600})
 	_ = json.Unmarshal([]byte(prefs), &u.Preferences)
 	jsonResponse(w, 200, u)
@@ -259,6 +271,7 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request, u User) {
 		apiError(w, 503, "database", "Sign out failed")
 		return
 	}
+	a.Log.Info("signed out", "user", u.Name)
 	a.cancelPrefetch(u.ID)
 	http.SetCookie(w, &http.Cookie{Name: "archika_session", Value: "", Path: "/", HttpOnly: true, Secure: a.Config.SecureCookies || r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	jsonResponse(w, 200, map[string]bool{"ok": true})
@@ -437,7 +450,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "account.update", "", map[string]string{"user_id": uid})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "account.update", "", map[string]string{"user_id": uid})
 	}
 	if e != nil {
 		apiError(w, 400, "account_write", fmt.Sprintf("Account change rejected: %s", safeError(e)))
@@ -447,7 +460,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, u User) {
 	jsonResponse(w, 200, map[string]any{"ok": true, "id": uid})
 }
 
-func (a *App) allowPasswordAttempt(w http.ResponseWriter, r *http.Request) bool {
+func passwordRemote(r *http.Request) string {
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if ip, e := netip.ParseAddr(host); e == nil {
 		ip = ip.Unmap()
@@ -457,6 +470,10 @@ func (a *App) allowPasswordAttempt(w http.ResponseWriter, r *http.Request) bool 
 			host = ip.String()
 		}
 	}
+	return host
+}
+func (a *App) allowPasswordAttempt(w http.ResponseWriter, r *http.Request) bool {
+	host := passwordRemote(r)
 	a.authMu.Lock()
 	at := time.Now()
 	v, tracked := a.loginAttempts[host]
@@ -483,6 +500,7 @@ func (a *App) allowPasswordAttempt(w http.ResponseWriter, r *http.Request) bool 
 	a.loginAttempts[host] = v
 	a.authMu.Unlock()
 	if v.Count > 10 {
+		a.Log.Warn("sign-in rate limited", "remote", host)
 		apiError(w, 429, "rate_limited", "Try again in a minute")
 		return false
 	}

@@ -34,11 +34,21 @@ func imageName(name string) bool {
 	}
 	return false
 }
+
+type scanCounts struct{ new, changed, aliases, missing, dirs int64 }
+type scanCountsKey struct{}
+
 func (a *App) scanJob(ctx context.Context, j Job) error {
+	started := time.Now()
+	counts := &scanCounts{}
+	ctx = context.WithValue(ctx, scanCountsKey{}, counts)
 	root, e := a.getRoot(ctx, j.RootID)
 	if e != nil {
 		return e
 	}
+	defer func() {
+		a.Log.Info("scan finished", "job", j.ID, "root", root.ID, "name", root.Name, "new", counts.new, "changed", counts.changed, "missing", counts.missing, "aliases", counts.aliases, "dirs", counts.dirs, "duration_ms", time.Since(started).Milliseconds())
+	}()
 	var payload struct {
 		Target string `json:"target_path"`
 		Path   string `json:"path"`
@@ -99,6 +109,7 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 		if e != nil {
 			return e
 		}
+		counts.dirs++
 		if listed != "listed" {
 			skipped, err := a.listScanDirectory(ctx, j, root, r, dir)
 			if e = err; e != nil {
@@ -211,8 +222,13 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 		return e
 	}
 	defer tx.Rollback()
+	var missing int64
 	if start == "." {
-		_, e = tx.Exec("UPDATE aliases SET status='offline' WHERE root_id=? AND seen=?", root.ID, "unseen:"+j.ID)
+		res, err := tx.Exec("UPDATE aliases SET status='offline' WHERE root_id=? AND seen=? AND status!='offline'", root.ID, "unseen:"+j.ID)
+		e = err
+		if e == nil {
+			missing, e = res.RowsAffected()
+		}
 	}
 	if e == nil && payload.Target != "" {
 		_, e = tx.Exec("UPDATE roots SET path=?,pending_path='',warning='',status='online',checked_at=? WHERE id=?", payload.Target, now(), root.ID)
@@ -224,6 +240,9 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 	}
 	if e == nil {
 		e = tx.Commit()
+	}
+	if e == nil {
+		counts.missing = missing
 	}
 	a.notifyWatch()
 	return e
@@ -503,6 +522,18 @@ func (a *App) observe(ctx context.Context, root Root, rel, kind string, st os.Fi
 	}
 	if e = tx.Commit(); e != nil {
 		return "", e
+	}
+	a.Log.Debug("source observed", "root", root.ID, "path", rel, "work", existingID, "new", isNew, "changed", changed, "new_alias", newAlias)
+	if counts, ok := ctx.Value(scanCountsKey{}).(*scanCounts); ok {
+		if isNew {
+			counts.new++
+		}
+		if changed {
+			counts.changed++
+		}
+		if newAlias && !isNew {
+			counts.aliases++
+		}
 	}
 	if changed {
 		a.cancelWorkPrefetch(existingID)

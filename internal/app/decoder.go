@@ -215,6 +215,7 @@ func (r *remoteAdapter) call(ctx context.Context, req decoderRequest) (decoderRe
 	}()
 	select {
 	case <-ctx.Done():
+		helperLog(ctx).Warn("decoder process timed out or cancelled", "page", req.Entry.ID, "error", ctx.Err().Error())
 		r.dead.Store(true)
 		_ = r.cmd.Process.Kill()
 		res := <-done
@@ -223,6 +224,7 @@ func (r *remoteAdapter) call(ctx context.Context, req decoderRequest) (decoderRe
 	case res := <-done:
 		if res.err != nil {
 			if _, ok := res.err.(*remoteError); !ok {
+				helperLog(ctx).Warn("decoder process failed", "page", req.Entry.ID, "error", res.err.Error())
 				r.dead.Store(true)
 				_ = r.cmd.Process.Kill()
 			}

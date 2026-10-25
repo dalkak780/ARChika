@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
- func TestRARImagePayloadsAndUnicodeJumpNavigation(t *testing.T) {
- for _, name := range []string{"real-pages-rar4-store.rar","real-pages-rar5-solid.rar", "real-pages-rar5-nonsolid.rar"} {
+func TestRARImagePayloadsAndUnicodeJumpNavigation(t *testing.T) {
+	for _, name := range []string{"real-pages-rar4-store.rar", "real-pages-rar5-solid.rar", "real-pages-rar5-nonsolid.rar"} {
 		t.Run(name, func(t *testing.T) {
 			root := openRoot(t, "testdata")
 			engine := openAdapter(t, root, name, "rar", Limits{})
 			entries, caps := manifest(t, engine)
- if len(entries)!=16||!strings.Contains(name,"rar4")&&!strings.Contains(entries[15].Path,"한국어") {
+			if len(entries) != 16 || !strings.Contains(name, "rar4") && !strings.Contains(entries[15].Path, "한국어") {
 				t.Fatalf("RAR image manifest %+v", entries)
 			}
 			wantSolid := "no"

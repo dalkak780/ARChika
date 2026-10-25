@@ -128,7 +128,7 @@ func (a *App) movesHTTP(w http.ResponseWriter, r *http.Request, u User) {
 		e = bump(tx)
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "move.confirm", root, map[string]string{"retained_work": old, "replaced_work": new, "evidence": "administrator-confirmed logical identity; target reindex required"})
 	}
 	if e != nil {
 		apiError(w, 409, "move_conflict", "Move confirmation failed")

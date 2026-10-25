@@ -315,11 +315,20 @@ func (h *CrawlerHTTP) Request(ctx context.Context, hosts []string, method, rawUR
 		}
 		response, e := client.Do(req)
 		if e != nil {
+			cause := e
+			var urlError *url.Error
+			if errors.As(e, &urlError) {
+				cause = urlError.Err
+			}
+			helperLog(ctx).Warn("provider network failed", "host", u.Hostname(), "error", logError(cause))
 			var ce *crawlError
 			if errors.As(e, &ce) {
 				return nil, ce
 			}
 			return nil, &crawlError{Stage: "transport"}
+		}
+		if response.StatusCode >= 400 {
+			helperLog(ctx).Warn("provider HTTP failed", "host", u.Hostname(), "status", response.StatusCode)
 		}
 		b, e := io.ReadAll(io.LimitReader(response.Body, 4<<20+1))
 		response.Body.Close()

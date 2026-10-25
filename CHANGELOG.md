@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add configurable structured server logging for startup, jobs, scans, indexing, authentication, administration, providers, helpers and HTTP failures.
+
 - License original project source under Apache-2.0 and include project and third-party notices in distributions.
 
 - Implement Go `net/http` server with an embedded React/Vite SPA, SQLite WAL migrations, local Argon2id accounts, server-side sessions, root grants, preferences and favorites.

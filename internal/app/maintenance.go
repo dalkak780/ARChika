@@ -112,7 +112,7 @@ func (a *App) deleteWork(ctx context.Context, wid, actor string) error {
 		e = audit(tx, actor, "work.index_remove", "", map[string]string{"work": wid})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, actor, "work.index_remove", "", map[string]string{"work": wid})
 	}
 	if e == nil {
 		a.cancelWorkPrefetch(wid)

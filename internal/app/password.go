@@ -73,6 +73,7 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request, u User) {
 		apiError(w, 503, "database", "Password change temporarily unavailable")
 		return
 	}
+	a.Log.Info("password changed", "user", u.Name)
 	u.MustChangePassword = false
 	jsonResponse(w, 200, u)
 }

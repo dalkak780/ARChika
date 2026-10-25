@@ -292,13 +292,27 @@ func (c *Crawler) RunJob(ctx context.Context, j Job) error {
 		hosts = manifest.Hosts
 		implementation = externalProvider{app: c.app, record: p, manifest: manifest}
 	}
+	c.app.Log.Info("crawl started", "provider", provider, "work", j.WorkID)
 	requests := 0
 	broker := func(ctx context.Context, method, raw string, b []byte, headers map[string]string) ([]byte, error) {
 		requests++
 		if requests > 24 {
 			return nil, &crawlError{Stage: "request_budget"}
 		}
-		return c.http.Request(ctx, hosts, method, raw, b, headers)
+		data, err := c.http.Request(context.WithValue(ctx, helperLogKey{}, c.app.Log.With("provider", provider)), hosts, method, raw, b, headers)
+		if err != nil {
+			host := ""
+			if parsed, parseErr := url.Parse(raw); parseErr == nil {
+				host = parsed.Hostname()
+			}
+			status := 0
+			var ce *crawlError
+			if errors.As(err, &ce) {
+				status = ce.Status
+			}
+			c.app.Log.Warn("provider request failed", "provider", provider, "host", host, "status", status, "error", err.Error())
+		}
+		return data, err
 	}
 	results, e := implementation.Lookup(ctx, input, broker, config, secrets)
 	if e != nil {
@@ -373,6 +387,13 @@ func (c *Crawler) RunJob(ctx context.Context, j Job) error {
 			return e
 		}
 	}
+	result := "none"
+	if strong {
+		result = "matched"
+	} else if len(results) > 0 {
+		result = "candidates"
+	}
+	c.app.Log.Info("crawl finished", "provider", provider, "work", j.WorkID, "result", result)
 	_, _ = c.app.DB.ExecContext(ctx, "UPDATE providers SET status='ready' WHERE id=?", provider)
 	return nil
 }
@@ -476,11 +497,14 @@ func (a *App) providerWrite(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "provider.configure", "", map[string]string{"provider": provider})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "provider.configure", "", map[string]string{"provider": provider})
 	}
 	if e != nil {
 		apiError(w, 503, "database", "Cannot update provider")
 		return
+	}
+	if p.Kind == "external" {
+		a.Log.Info("plugin updated", "provider", provider, "actor", u.ID)
 	}
 	a.signal()
 	jsonResponse(w, 200, map[string]bool{"ok": true})

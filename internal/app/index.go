@@ -66,6 +66,7 @@ func (a *App) ensureIndex(ctx context.Context, al Alias) error {
 	}
 }
 func (a *App) buildIndex(ctx context.Context, al Alias) error {
+	started := time.Now()
 	var status, code string
 	var version int64
 	e := a.DB.QueryRowContext(ctx, "SELECT index_status,version,error_code FROM works WHERE id=?", al.WorkID).Scan(&status, &version, &code)
@@ -131,7 +132,7 @@ func (a *App) buildIndex(ctx context.Context, al Alias) error {
 	}
 	var entries []ar.Entry
 	var capabilities ar.Capabilities
-	e = a.sessions.With(ctx, al, func(engine ar.Adapter) error {
+	e = a.sessions.With(context.WithValue(ctx, helperLogKey{}, a.Log.With("work", al.WorkID, "root", al.RootID, "path", al.Path)), al, func(engine ar.Adapter) error {
 		var err error
 		entries, capabilities, err = engine.List(ctx)
 		return err
@@ -142,6 +143,7 @@ func (a *App) buildIndex(ctx context.Context, al Alias) error {
 	}
 	if e != nil {
 		_, _ = a.DB.ExecContext(ctx, "UPDATE works SET index_status='error',error_code=?,error_message=?,error_at=? WHERE id=? AND version=?", decodeErrorCode(e), indexError(e), now(), al.WorkID, al.Version)
+		a.Log.Warn("index failed", "work", al.WorkID, "root", al.RootID, "path", al.Path, "code", decodeErrorCode(e), "message", indexError(e), "error", logError(e))
 		return e
 	}
 	// All enumeration results remain private until both revision checks succeed.
@@ -228,6 +230,14 @@ func (a *App) buildIndex(ctx context.Context, al Alias) error {
 	}
 	if e == nil {
 		e = tx.Commit()
+	}
+	if e == nil {
+		attrs := []any{"work", al.WorkID, "root", al.RootID, "path", al.Path, "pages", len(entries), "duration_ms", time.Since(started).Milliseconds()}
+		if len(capabilities.Skipped) > 0 || capabilities.Salvaged {
+			a.Log.Info("indexed with recovery", append(attrs, "skipped", capabilities.Skipped, "salvaged", capabilities.Salvaged)...)
+		} else {
+			a.Log.Debug("indexed", attrs...)
+		}
 	}
 	return e
 }

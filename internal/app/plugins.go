@@ -365,6 +365,7 @@ func (a *App) pluginsHTTP(w http.ResponseWriter, r *http.Request, u User) {
 			apiError(w, 503, "database", "Plugin removal failed")
 			return
 		}
+		a.Log.Info("plugin deleted", "provider", provider, "actor", u.ID)
 		jsonResponse(w, 200, map[string]bool{"ok": true})
 		return
 	}
@@ -410,5 +411,6 @@ func (a *App) pluginsHTTP(w http.ResponseWriter, r *http.Request, u User) {
 		apiError(w, 409, "plugin_conflict", "Plugin ID already exists")
 		return
 	}
+	a.Log.Info("plugin installed", "provider", in.Manifest.ID, "version", in.Manifest.Version, "actor", u.ID)
 	jsonResponse(w, 201, map[string]bool{"ok": true})
 }

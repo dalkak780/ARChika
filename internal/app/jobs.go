@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -75,7 +74,7 @@ func (a *App) jobLoop() {
 			continue
 		}
 		if e := a.processWatchEvents(a.ctx); e != nil && a.ctx.Err() == nil {
-			a.Log.Warn("watch event processing failed", "error_type", fmt.Sprintf("%T", e))
+			a.Log.Warn("watch event processing failed", "error", logError(e))
 		}
 		j, e := scanJob(a.DB.QueryRowContext(a.ctx, "SELECT "+jobColumns+" FROM jobs WHERE state='queued' AND not_before<=? ORDER BY CASE WHEN type='incremental' THEN 0 WHEN type='stability' THEN 1 WHEN type='auto_crawl' THEN 3 ELSE 2 END,created LIMIT 1", now()))
 		if e != nil {
@@ -89,6 +88,12 @@ func (a *App) jobLoop() {
 		if n == 0 {
 			continue
 		}
+		started := time.Now()
+		attrs := []any{"job", j.ID, "type", j.Type, "root", j.RootID, "origin", j.Origin}
+		if j.WorkID != "" {
+			attrs = append(attrs, "work", j.WorkID)
+		}
+		a.Log.Info("job started", attrs...)
 		ctx, cancel := context.WithCancel(a.ctx)
 		monitorDone := make(chan struct{})
 		go func() {
@@ -107,7 +112,7 @@ func (a *App) jobLoop() {
 							return
 						}
 						if ctx.Err() == nil {
-							a.Log.Warn("background job monitor failed", "job", j.ID, "error_type", fmt.Sprintf("%T", aliveErr))
+							a.Log.Warn("background job monitor failed", "job", j.ID, "error", aliveErr.Error())
 						}
 					}
 				}
@@ -122,9 +127,16 @@ func (a *App) jobLoop() {
 		cancel()
 		a.signal()
 		if a.ctx.Err() != nil {
+			a.Log.Debug("job stopped", "job", j.ID, "type", j.Type, "error", a.ctx.Err().Error())
 			return
 		}
+		if errors.Is(e, context.Canceled) {
+			if aliveErr := a.jobAlive(a.ctx, j.ID); errors.Is(aliveErr, errJobStopped) || errors.Is(aliveErr, sql.ErrNoRows) {
+				e = errJobStopped
+			}
+		}
 		if errors.Is(e, errJobStopped) || errors.Is(e, errJobDeferred) {
+			a.Log.Debug("job deferred or stopped", "job", j.ID, "type", j.Type, "error", logError(e))
 			continue
 		}
 		state := "completed"
@@ -132,7 +144,7 @@ func (a *App) jobLoop() {
 		if e != nil {
 			state = "failed"
 			msg = safeError(e)
-			a.Log.Warn("background job failed", "job", j.ID, "type", j.Type, "error_type", fmt.Sprintf("%T", e))
+			a.Log.Warn("job failed", "job", j.ID, "type", j.Type, "duration_ms", time.Since(started).Milliseconds(), "error", logError(e))
 		}
 		single := j.WorkID != ""
 		failedAttempt := 0
@@ -140,6 +152,11 @@ func (a *App) jobLoop() {
 			failedAttempt = 1
 		}
 		_, _ = a.DB.ExecContext(a.ctx, "UPDATE jobs SET state=?,error=CASE WHEN ?!='' THEN ? ELSE error END,done=CASE WHEN ? THEN 1 ELSE done END,total=CASE WHEN ? THEN 1 WHEN ?='completed' THEN done ELSE total END,failed=failed+?,updated=? WHERE id=? AND state='running'", state, msg, msg, single, single, state, failedAttempt, now(), j.ID)
+		if e == nil {
+			if finished, err := scanJob(a.DB.QueryRowContext(a.ctx, "SELECT "+jobColumns+" FROM jobs WHERE id=?", j.ID)); err == nil && finished.State == "completed" {
+				a.Log.Info("job finished", "job", j.ID, "type", j.Type, "duration_ms", time.Since(started).Milliseconds(), "done", finished.Done, "failed", finished.Failed, "total", finished.Total)
+			}
+		}
 	}
 }
 func (a *App) jobAlive(ctx context.Context, jid string) error {
@@ -383,7 +400,7 @@ func (a *App) jobAction(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "job."+in.Action, j.RootID, map[string]string{"job": jid, "previous_actor": j.Actor})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "job."+in.Action, j.RootID, map[string]string{"job": jid, "previous_actor": j.Actor})
 	}
 	if e != nil {
 		apiError(w, 503, "database", "Cannot update job")

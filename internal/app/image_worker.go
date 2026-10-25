@@ -118,10 +118,17 @@ func processImage(ctx context.Context, input PageValue, t Transform, maxPixels, 
 		e = errUnsupportedTransform
 	}
 	if e != nil {
+		helperLog(ctx).Warn("image process rejected", "error", e.Error())
 		_ = cmd.Process.Kill()
 	}
 	we := <-writeDone
 	waitErr := cmd.Wait()
+	if waitErr != nil {
+		helperLog(ctx).Warn("image process failed", "error", waitErr.Error())
+	}
+	if ctx.Err() != nil {
+		helperLog(ctx).Warn("image process timed out or cancelled", "error", ctx.Err().Error())
+	}
 	if e == nil {
 		e = we
 	}

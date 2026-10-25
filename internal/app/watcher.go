@@ -106,12 +106,19 @@ func (a *App) registerWatches(watcher directoryWatcher, watched map[string]Root)
 			delete(watched, p)
 		}
 	}
+	counts := map[string]int{}
+	for _, root := range watched {
+		counts[root.ID]++
+	}
+	for root, dirs := range counts {
+		a.Log.Info("watching root", "root", root, "dirs", dirs)
+	}
 }
 
 func (a *App) watchLoop() {
 	watcher, e := fsnotify.NewWatcher()
 	if e != nil {
-		a.Log.Error("watchers unavailable", "error", e)
+		a.Log.Error("watchers unavailable", "error", logError(e))
 		return
 	}
 	defer watcher.Close()
@@ -148,6 +155,7 @@ func (a *App) watchLoop() {
 				continue
 			}
 			rel = filepath.ToSlash(rel)
+			a.Log.Debug("watch event", "root", root.ID, "path", rel, "op", event.Op.String())
 			if rel == "." {
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 					_, _ = a.DB.ExecContext(a.ctx, "UPDATE roots SET status='offline',warning='Root watch lost; verify mount and reconcile explicitly' WHERE id=?", root.ID)
@@ -270,7 +278,7 @@ func (a *App) processWatchEvents(ctx context.Context) error {
 			if errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) {
 				return e
 			}
-			a.Log.Warn("watch event observation failed", "root", v.root, "path", v.rel, "error", e)
+			a.Log.Warn("watch event observation failed", "root", v.root, "path", v.rel, "error", logError(e))
 		}
 		_, e = a.DB.ExecContext(ctx, "DELETE FROM watch_events WHERE root_id=? AND path=? AND observed=?", v.root, v.rel, v.observed)
 		if e != nil {

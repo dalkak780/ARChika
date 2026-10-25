@@ -88,7 +88,7 @@ func (a *App) loadPage(ctx context.Context, u User, al Alias, p ar.Entry, t Tran
 		defer a.release()
 		start := time.Now()
 		var value PageValue
-		e := a.sessions.With(shared, al, func(engine ar.Adapter) error {
+		e := a.sessions.With(context.WithValue(shared, helperLogKey{}, a.Log.With("work", al.WorkID, "page", p.ID)), al, func(engine ar.Adapter) error {
 			stream, e := engine.Open(shared, p)
 			if e != nil {
 				return e
@@ -143,7 +143,7 @@ func (a *App) loadPage(ctx context.Context, u User, al Alias, p ar.Entry, t Tran
 				}
 			}
 			defer func() { <-a.transform }()
-			return processImage(shared, v, t, a.Config.MaxPixels, int64(a.Config.PageBytes), false)
+			return processImage(context.WithValue(shared, helperLogKey{}, a.Log.With("work", al.WorkID, "page", p.ID)), v, t, a.Config.MaxPixels, int64(a.Config.PageBytes), false)
 		})
 	}
 	if e != nil {
@@ -406,7 +406,7 @@ func (a *App) coverHTTP(w http.ResponseWriter, r *http.Request, u User) {
 		e = audit(tx, u.ID, "cover.select", al.RootID, map[string]string{"work": al.WorkID, "entry": in.EntryID})
 	}
 	if e == nil {
-		e = tx.Commit()
+		e = a.commitAdmin(tx, u.ID, "cover.select", al.RootID, map[string]string{"work": al.WorkID, "entry": in.EntryID})
 	}
 	if e != nil {
 		apiError(w, 503, "database", "Cannot update cover")
