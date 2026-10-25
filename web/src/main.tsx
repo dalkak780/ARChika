@@ -46,7 +46,12 @@ function Shell() {
           </Link>
           <nav aria-label="Main">
             <Link to="/">Library</Link>
-            {user.admin && <Link to="/admin">Administration</Link>}
+            {user.admin && (
+              <Link to="/admin" aria-label="Administration">
+                <span className="wide-only">Administration</span>
+                <span className="narrow-only">Admin</span>
+              </Link>
+            )}
             <Link to="/account">{user.name}</Link>
             <button onClick={() => logout().catch(setError)}>Sign out</button>
           </nav>

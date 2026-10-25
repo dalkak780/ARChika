@@ -353,11 +353,22 @@ func (a *App) rootDelete(w http.ResponseWriter, r *http.Request, u User) {
 func (a *App) configPreview(w http.ResponseWriter, r *http.Request, u User) {
 	changes := []map[string]any{}
 	for _, root := range a.Config.Roots {
-		var rid string
-		e := a.DB.QueryRowContext(r.Context(), "SELECT id FROM roots WHERE bootstrap_key=?", root.Key).Scan(&rid)
+		var rid, name, path, pending string
+		var watch, autoCrawl bool
+		var quiet int
+		e := a.DB.QueryRowContext(r.Context(), "SELECT id,name,path,COALESCE(pending_path,''),watch,auto_crawl,quiet_seconds FROM roots WHERE bootstrap_key=?", root.Key).Scan(&rid, &name, &path, &pending, &watch, &autoCrawl, &quiet)
 		action := "update"
 		if e == sql.ErrNoRows {
 			action = "add"
+		} else if e == nil {
+			want := root.QuietSeconds
+			if want < 1 {
+				want = a.Config.QuietSeconds
+			}
+			resolved, pe := a.Config.RootPath(root.Path)
+			if pe == nil && name == root.Name && (resolved == path || resolved == pending) && watch == root.Watch && autoCrawl == root.AutoCrawl && quiet == want {
+				continue
+			}
 		}
 		changes = append(changes, map[string]any{"key": root.Key, "name": root.Name, "path": root.Path, "existing_id": rid, "action": action})
 	}
