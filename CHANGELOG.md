@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent reader pages from briefly rendering at a placeholder aspect ratio before expanding to their decoded size, including cached page turns and spread layout.
+
 - Add configurable structured server logging for startup, jobs, scans, indexing, authentication, administration, providers, helpers and HTTP failures.
 
 - License original project source under Apache-2.0 and include project and third-party notices in distributions.

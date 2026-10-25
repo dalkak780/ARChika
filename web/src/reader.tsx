@@ -111,7 +111,7 @@ function ReaderBackdrop({ workId }: { workId: string }) {
     </div>
   );
 }
-const decodedPages = new WeakSet<CachedPage>();
+const decodedPages = new WeakMap<CachedPage, Required<Dimensions>>();
 async function decodedPage(workId: string, page: Page, width: number, signal: AbortSignal) {
   const formats = pageCache.get(pageKey(workId, page, width, true)) ? [true] : [false, true];
   for (const forcePNG of formats) {
@@ -129,7 +129,7 @@ async function decodedPage(workId: string, page: Page, width: number, signal: Ab
         const decoder = new Image();
         decoder.src = image.url;
         await decoder.decode();
-        decodedPages.add(image);
+        decodedPages.set(image, { width: decoder.naturalWidth, height: decoder.naturalHeight });
       }
       signal.throwIfAborted();
       return { image, key, release };
@@ -172,6 +172,12 @@ function PageImage({
     cached && decodedPages.has(cached)
       ? { image: cached, page, key: loadKey, cacheKey: png ? pngKey : originalKey }
       : display;
+  const dimensions = image && decodedPages.get(image.image);
+  const displayedOrdinal = image?.page.ordinal;
+  useLayoutEffect(() => {
+    if (dimensions && displayedOrdinal !== undefined)
+      onDimensions(displayedOrdinal, dimensions.width, dimensions.height);
+  }, [dimensions, displayedOrdinal, onDimensions]);
   const loading = image?.key !== loadKey;
   const notifyLoaded = useEffectEvent(() => onLoaded?.());
   useEffect(() => {
@@ -213,12 +219,11 @@ function PageImage({
       className={`reader-image ${className}`}
       aria-busy={loading && !error}
       style={{
-        aspectRatio:
-          image?.page.width && image.page.height
-            ? `${image.page.width}/${image.page.height}`
-            : page.width && page.height
-              ? `${page.width}/${page.height}`
-              : "2/3",
+        aspectRatio: dimensions
+          ? `${dimensions.width}/${dimensions.height}`
+          : page.width && page.height
+            ? `${page.width}/${page.height}`
+            : "2/3",
       }}
     >
       {error ? (
@@ -237,13 +242,6 @@ function PageImage({
                 src={image.image.url}
                 alt={t("reader.pageNumber", { page: image.page.ordinal + 1 })}
                 draggable="false"
-                onLoad={(event) => {
-                  onDimensions(
-                    image.page.ordinal,
-                    event.currentTarget.naturalWidth,
-                    event.currentTarget.naturalHeight,
-                  );
-                }}
               />
               {image.image.fallback && (
                 <figcaption>
