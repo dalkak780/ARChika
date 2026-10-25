@@ -47,16 +47,10 @@ function Shell() {
           <nav aria-label="Main">
             <Link to="/">Library</Link>
             {user.admin && <Link to="/admin">Administration</Link>}
-            <span className="muted">{user.name}</span>
+            <Link to="/account">{user.name}</Link>
             <button onClick={() => logout().catch(setError)}>Sign out</button>
           </nav>
         </header>
-      )}
-      {!reader && (
-        <details className="panel">
-          <summary>Account: change password</summary>
-          <ChangePassword />
-        </details>
       )}
       <ErrorNotice error={error} />
       <Outlet />
@@ -123,8 +117,22 @@ const admin = createRoute({
   }),
   component: Admin,
 });
+const account = createRoute({
+  getParentRoute: () => root,
+  path: "/account",
+  component: () => (
+    <main id="main" className="account">
+      <h1>Account</h1>
+      <section className="panel">
+        <h2>Change password</h2>
+        <p className="muted">Update the password for your account.</p>
+        <ChangePassword />
+      </section>
+    </main>
+  ),
+});
 const router = createRouter({
-  routeTree: root.addChildren([library, reader, admin]),
+  routeTree: root.addChildren([library, reader, admin, account]),
   defaultPreload: false,
 });
 declare module "@tanstack/react-router" {

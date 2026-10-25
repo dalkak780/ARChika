@@ -351,11 +351,10 @@ summary .muted {
   background: var(--overlay);
   border: 1px solid var(--line);
   color: var(--text);
-  font-size: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 0.2rem 0.4rem;
-  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.25rem 0.45rem;
+  border-radius: 5px;
 }
 .status.ready,
 .status.indexed {
@@ -381,16 +380,18 @@ summary .muted {
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
-  min-width: 44px;
-  min-height: 44px;
-  background: var(--surface);
-  color: var(--accent);
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--overlay);
+  color: var(--text);
   font-size: 1.3rem;
   z-index: 1;
 }
 .pagination {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   gap: 1rem;
   margin-top: 2rem;
@@ -401,6 +402,69 @@ summary .muted {
 }
 .pagination .inline {
   margin: 0;
+  flex-wrap: nowrap;
+}
+.pagination .inline > label {
+  margin: 0;
+}
+.pagination button,
+.pagination input,
+.filters input:not([type="checkbox"]),
+.filters select,
+.search-form button {
+  height: 44px;
+}
+.library-controls {
+  margin: 0;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.favorites-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.favorites-filter[aria-pressed="true"],
+.favorite-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.favorites-filter svg {
+  width: 18px;
+  height: 18px;
+}
+.account .panel {
+  max-width: 520px;
+}
+.queue-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.queue-heading h2 {
+  margin-bottom: 0.4rem;
+}
+.config-change {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.getting-started li + li {
+  margin-top: 0.4rem;
+}
+.admin progress {
+  display: block;
+  width: 100px;
+  height: 8px;
+  accent-color: var(--accent);
+}
+.admin td .error-text {
+  color: var(--error);
 }
 .infinite-list {
   height: 70dvh;
@@ -874,7 +938,16 @@ hr {
     grid-template-columns: 1fr;
   }
   .page-heading {
-    align-items: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .library-controls {
+    margin-left: auto;
+    gap: 0.4rem;
+  }
+  .library-controls button {
+    padding-inline: 0.6rem;
+    font-size: 0.85rem;
   }
   .eyebrow {
     font-size: 0.55rem;
@@ -936,12 +1009,17 @@ hr {
     padding: 1rem;
   }
   .pagination {
-    justify-content: center;
+    gap: 0.5rem;
+  }
+  .pagination button {
+    padding-inline: 0.5rem;
+    font-size: 0.8rem;
+  }
+  .pagination input {
+    width: 55px;
   }
   .pagination .inline {
-    order: -1;
-    width: 100%;
-    justify-content: center;
+    gap: 0.4rem;
   }
   .search-form {
     gap: 0.4rem;

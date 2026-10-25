@@ -8,6 +8,7 @@ import { VirtualLibraryRows } from "./virtual.tsx";
 import { trimOldest } from "./lru.ts";
 import { api, APIError, encoded, useAPI, useAction, ErrorNotice, Pending } from "./api.tsx";
 
+import { Icon } from "./icons.tsx";
 import { thumbnailURL } from "./images.ts";
 
 const route = getRouteApi("/");
@@ -144,23 +145,29 @@ export default function Library() {
         <div>
           <div className="eyebrow">BROWSE YOUR COLLECTION</div>
           <h1>Library</h1>
+        </div>
+        <div className="toolbar library-controls">
           <button
+            className="favorites-filter"
             aria-pressed={search.q === "favorite:true"}
             onClick={() => update({ q: search.q === "favorite:true" ? "" : "favorite:true" })}
           >
-            Favorites
+            <Icon name="favorite" /> Favorites
           </button>
-        </div>
-        <div className="segmented" aria-label="Library view">
-          <button aria-pressed={search.view === "pages"} onClick={() => update({ view: "pages" })}>
-            Pages
-          </button>
-          <button
-            aria-pressed={search.view === "infinite"}
-            onClick={() => update({ view: "infinite" })}
-          >
-            Infinite
-          </button>
+          <div className="segmented" aria-label="Library view">
+            <button
+              aria-pressed={search.view === "pages"}
+              onClick={() => update({ view: "pages" })}
+            >
+              Pages
+            </button>
+            <button
+              aria-pressed={search.view === "infinite"}
+              onClick={() => update({ view: "infinite" })}
+            >
+              Infinite
+            </button>
+          </div>
         </div>
       </div>
       <section className="panel filters" aria-label="Library filters">
@@ -339,8 +346,8 @@ function PagedLibrary({
                     defaultValue={search.page}
                   />
                 </label>
+                <span>/ {Math.max(1, Math.ceil(result.data.total / search.limit))}</span>
                 <button>Go</button>
-                <span>of {Math.max(1, Math.ceil(result.data.total / search.limit))}</span>
               </form>
               <button
                 disabled={search.page * search.limit >= result.data.total}

@@ -17,6 +17,72 @@ import React, { useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useAuth, useAPI, useAction, encoded, ErrorNotice, Pending } from "./api.tsx";
 const route = getRouteApi("/admin");
+const tabs = [
+  {
+    id: "roots",
+    label: "Roots",
+    description: "Manage library folders and their filesystem settings.",
+  },
+  {
+    id: "users",
+    label: "Users",
+    description: "Create accounts and grant access to library roots.",
+  },
+  {
+    id: "jobs",
+    label: "Jobs",
+    description: "Run discovery, indexing, thumbnails, and metadata jobs.",
+  },
+  {
+    id: "offline",
+    label: "Offline",
+    description: "Review moved or missing items before cleaning up the catalog.",
+  },
+  {
+    id: "providers",
+    label: "Providers",
+    description: "Configure metadata sources and fetch or import metadata.",
+  },
+  { id: "plugins", label: "Plugins", description: "Install and configure trusted server plugins." },
+  { id: "audit", label: "Audit", description: "Review recent administrative activity." },
+];
+const jobTypes = [
+  { id: "scan", label: "Discover / scan", help: "Find new or changed archives in a root." },
+  {
+    id: "reconcile",
+    label: "Reconcile filesystem",
+    help: "Verify the catalog against the filesystem and mark missing items offline.",
+  },
+  { id: "index_bulk", label: "Index page lists", help: "Read page lists for the selected works." },
+  {
+    id: "thumbnail",
+    label: "Generate thumbnails",
+    help: "Pre-generate cover thumbnails for the selected works.",
+  },
+  { id: "crawl_bulk", label: "Crawl metadata", help: "Fetch metadata from a provider." },
+];
+export function jobActions(state: string) {
+  switch (state) {
+    case "queued":
+    case "running":
+      return ["pause", "cancel"];
+    case "paused":
+      return ["resume", "cancel"];
+    case "failed":
+    case "cancelled":
+      return ["retry"];
+    default:
+      return [];
+  }
+}
+function relativeTime(timestamp: number) {
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (Math.abs(seconds) < 60) return format.format(seconds, "second");
+  if (Math.abs(seconds) < 3600) return format.format(Math.round(seconds / 60), "minute");
+  if (Math.abs(seconds) < 86400) return format.format(Math.round(seconds / 3600), "hour");
+  return format.format(Math.round(seconds / 86400), "day");
+}
 const formText = (value: FormDataEntryValue | null) => {
   if (value !== null && typeof value !== "string") throw new Error("Expected a text form field");
   return value || "";
@@ -73,7 +139,21 @@ function Check({
     </label>
   );
 }
-function Result({ value }: { value: unknown }) {
+export function Result({ value, job = false }: { value: unknown; job?: boolean }) {
+  if (value && typeof value === "object") {
+    let message = "";
+    if (job && "count" in value && typeof value.count === "number")
+      message = `This job would cover ${value.count} items.`;
+    else if (job && "id" in value && typeof value.id === "string") message = "Job queued.";
+    else if ("ok" in value && value.ok === true && Object.keys(value).length === 1)
+      message = "Saved.";
+    if (message)
+      return (
+        <p className="notice" role="status">
+          {message}
+        </p>
+      );
+  }
   return value ? (
     <pre className="result" role="status">
       {JSON.stringify(value, null, 2)}
@@ -123,7 +203,7 @@ export default function Admin() {
         <span className="badge">Administrator</span>
       </div>
       <nav className="tabs" aria-label="Administration sections">
-        {["roots", "users", "jobs", "offline", "providers", "plugins", "audit"].map((name) => (
+        {tabs.map(({ id: name, label }) => (
           <Link
             key={name}
             to="/admin"
@@ -131,10 +211,11 @@ export default function Admin() {
             activeOptions={{ exact: true, includeSearch: true }}
             className={tab === name ? "selected" : ""}
           >
-            {name}
+            {label}
           </Link>
         ))}
       </nav>
+      <p className="muted">{tabs.find((item) => item.id === tab)?.description}</p>
       {tab === "roots" ? (
         <Roots />
       ) : tab === "users" ? (
@@ -163,16 +244,52 @@ function Roots() {
   const action = useAction();
   return (
     <>
+      <section className="panel">
+        <h2>Getting started</h2>
+        <p className="muted">Set up your library in this order.</p>
+        <ol className="getting-started">
+          <li>
+            <Link to="/admin" search={{ tab: "roots" }}>
+              Roots
+            </Link>
+            : confirm library folders{roots.data ? ` (${roots.data.length} configured)` : ""}.
+          </li>
+          <li>
+            <Link to="/admin" search={{ tab: "jobs" }}>
+              Jobs
+            </Link>
+            : run Discover / scan.
+          </li>
+          <li>
+            <Link to="/admin" search={{ tab: "users" }}>
+              Users
+            </Link>
+            : create accounts and grant roots.
+          </li>
+          <li>
+            <Link to="/admin" search={{ tab: "providers" }}>
+              Providers
+            </Link>
+            : fetch metadata (optional).
+          </li>
+          <li>
+            <Link to="/admin" search={{ tab: "offline" }}>
+              Offline
+            </Link>
+            : clean up missing items.
+          </li>
+        </ol>
+      </section>
       <p className="notice">
         Original files are read-only. Adding a root does not start a scan. Paths belong to the
         server/container filesystem; explicitly enqueue discovery in Jobs.
       </p>
       <ErrorNotice error={roots.error || preview.error || action.error || providers.error} />
       <section className="panel">
-        <h2>Configuration bootstrap</h2>
-        <p>
-          Review configured roots, then apply only the selected changes. Existing catalog entries
-          are not silently replaced.
+        <h2>Changes from config file</h2>
+        <p className="muted">
+          These are differences between archika.yaml and the catalog; apply only the changes you
+          select.
         </p>
         {preview.data && (
           <form
@@ -188,16 +305,20 @@ function Roots() {
           >
             {preview.data.changes.map((change) => (
               <Check key={change.key} name="keys" value={change.key}>
-                {change.name} — {change.path} · {change.action}
-                {change.existing_id ? ` (${change.existing_id})` : ""}
+                <span className="config-change" title={change.existing_id || change.key}>
+                  <strong>{change.name}</strong>
+                  <span className="muted">{change.path}</span>
+                  <span className="badge">{change.action}</span>
+                </span>
               </Check>
             ))}
             {!preview.data.changes.length && (
-              <p className="muted">No pending configuration changes.</p>
+              <p className="muted">Catalog matches the config file.</p>
             )}
             <button disabled={action.isPending || !preview.data.changes.length}>
               Apply selected changes
             </button>
+            <Result value={action.data} />
           </form>
         )}
       </section>
@@ -400,10 +521,13 @@ function Users() {
     roots = useAPI<Root[]>(["roots"], "/roots");
   return (
     <>
-      <p className="muted">
-        Root grants are independent. Administrator accounts have administrative access. The server
-        prevents disabling or demoting the final administrator.
-      </p>
+      <section className="panel">
+        <h2>User accounts</h2>
+        <p className="muted">
+          Root grants are independent. Administrator accounts have administrative access. The server
+          prevents disabling or demoting the final administrator.
+        </p>
+      </section>
       <ErrorNotice error={users.error || roots.error} />
       {users.isPending && <Pending />}
       {users.data?.map((user) => (
@@ -420,6 +544,7 @@ function Users() {
       ))}
       <section className="panel">
         <h2>Create user</h2>
+        <p className="muted">Choose an account role and the roots this user can access.</p>
         <UserForm roots={roots.data || []} />
       </section>
     </>
@@ -427,6 +552,7 @@ function Users() {
 }
 function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root[] }) {
   const action = useAction();
+  const [savedName, setSavedName] = useState("");
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget,
@@ -448,7 +574,10 @@ function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root
         onSuccess: () => {
           const input = form.elements.namedItem("password");
           if (input instanceof HTMLInputElement) input.value = "";
-          if (!user.id) form.reset();
+          if (!user.id) {
+            setSavedName(text(data, "name"));
+            form.reset();
+          }
         },
       },
     );
@@ -491,19 +620,41 @@ function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root
           </Check>
         ))}
       </fieldset>
-      <button disabled={action.isPending}>{user.id ? "Update account" : "Create account"}</button>
+      <button className="primary" disabled={action.isPending}>
+        {user.id ? "Update account" : "Create account"}
+      </button>
       <ErrorNotice error={action.error} />
-      {action.isSuccess && <p role="status">Account saved.</p>}
+      {action.isSuccess && (
+        <p className="notice" role="status">
+          {user.id ? "Account saved." : `Created user ${savedName}.`}
+        </p>
+      )}
     </form>
   );
 }
 
+// Child jobs inherit the parent's origin, so only top-level types count as direct work.
+const directJobTypes = new Set([
+  "scan",
+  "reconcile",
+  "index_bulk",
+  "thumbnail",
+  "crawl_bulk",
+  "metadata_remerge",
+  "filename_reparse",
+]);
 function Jobs() {
   const jobs = useAPI<Job[]>(["jobs"], "/admin/jobs", { refetchInterval: 3000 }),
-    roots = useAPI<Root[]>(["roots"], "/roots");
+    roots = useAPI<Root[]>(["roots"], "/roots"),
+    providers = useAPI<Providers>(["providers"], "/admin/providers");
   const action = useAction(),
     [preview, setPreview] = useState<unknown>(null),
     [error, setError] = useState<unknown>(null);
+  const [type, setType] = useState("scan"),
+    [showAutomatic, setShowAutomatic] = useState(false);
+  const isDirect = (job: Job) => job.origin === "manual" && directJobTypes.has(job.type);
+  const hidden = jobs.data?.filter((job) => !isDirect(job)).length ?? 0;
+  const visible = jobs.data?.filter((job) => showAutomatic || isDirect(job));
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -534,7 +685,7 @@ function Jobs() {
     <>
       <section className="panel">
         <h2>Explicit background work</h2>
-        <p>
+        <p className="muted">
           No startup scan or library-wide preconversion is performed. Preview scope before
           submitting expensive work.
         </p>
@@ -542,13 +693,21 @@ function Jobs() {
           <div className="form-grid">
             <label>
               Job type
-              <select name="type">
-                <option value="scan">Discover / scan</option>
-                <option value="reconcile">Reconcile filesystem</option>
-                <option value="index_bulk">Index page lists</option>
-                <option value="thumbnail">Generate thumbnails</option>
-                <option value="crawl_bulk">Crawl metadata</option>
+              <select
+                name="type"
+                value={type}
+                onChange={(event) => {
+                  setType(event.target.value);
+                  setPreview(null);
+                }}
+              >
+                {jobTypes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
               </select>
+              <small>{jobTypes.find((item) => item.id === type)?.help}</small>
             </label>
             <label>
               Root
@@ -561,18 +720,31 @@ function Jobs() {
                 ))}
               </select>
             </label>
-            <label>
-              Work IDs (comma or newline)
-              <textarea name="work_ids" rows={2} />
-            </label>
-            <label>
-              Search scope
-              <input name="query" placeholder="Optional advanced query" />
-            </label>
-            <label>
-              Provider ID
-              <input name="provider" placeholder="Required for crawl jobs" />
-            </label>
+            {type !== "scan" && type !== "reconcile" && (
+              <>
+                <label>
+                  Work IDs (comma or newline)
+                  <textarea name="work_ids" rows={2} />
+                </label>
+                <label>
+                  Search scope
+                  <input name="query" placeholder="Optional advanced query" />
+                </label>
+              </>
+            )}
+            {type === "crawl_bulk" && (
+              <label>
+                Provider
+                <select name="provider" required>
+                  <option value="">Select provider</option>
+                  {providers.data?.providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           <div className="toolbar">
             <button name="action" value="preview" disabled={action.isPending}>
@@ -583,82 +755,115 @@ function Jobs() {
             </button>
           </div>
         </form>
-        <Result value={preview} />
+        <Result value={preview} job />
       </section>
-      <div className="toolbar">
-        <button
-          onClick={() => action.mutate({ path: "/admin/jobs/pause", body: { paused: true } })}
-        >
-          Pause all jobs
-        </button>
-        <button
-          onClick={() =>
-            action.mutate({
-              path: "/admin/jobs/pause",
-              body: { paused: false },
-            })
-          }
-        >
-          Resume all jobs
-        </button>
-      </div>
-      <ErrorNotice error={jobs.error || roots.error || action.error || error} />
-      {jobs.isPending && <Pending />}
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>State</th>
-              <th>Progress</th>
-              <th>Scope / error</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.data?.map((job) => (
-              <tr key={job.id}>
-                <td>
-                  <strong>{job.type}</strong>
-                  <small>
-                    {job.id}
-                    <br />
-                    {job.created}
-                  </small>
-                </td>
-                <td>{job.state}</td>
-                <td>
-                  {job.done} / {job.total}
-                  <br />
-                  <small>{job.failed} failed</small>
-                </td>
-                <td>
-                  {job.root_id || job.work_id || "Bulk"}
-                  <small className="error-text">{job.error}</small>
-                </td>
-                <td>
-                  <div className="toolbar">
-                    {["pause", "resume", "cancel", "retry"].map((command) => (
-                      <button
-                        key={command}
-                        disabled={action.isPending}
-                        onClick={() =>
-                          action.mutate({
-                            path: `/admin/jobs/${encoded(job.id)}`,
-                            body: { action: command },
-                          })
-                        }
-                      >
-                        {command}
-                      </button>
-                    ))}
-                  </div>
-                </td>
+      <section className="panel">
+        <div className="queue-heading">
+          <div>
+            <h2>Job queue</h2>
+            <p className="muted">Monitor progress and manage queued work.</p>
+          </div>
+          <div className="toolbar">
+            <button
+              disabled={action.isPending}
+              onClick={() => action.mutate({ path: "/admin/jobs/pause", body: { paused: true } })}
+            >
+              Pause all jobs
+            </button>
+            <button
+              disabled={action.isPending}
+              onClick={() =>
+                action.mutate({
+                  path: "/admin/jobs/pause",
+                  body: { paused: false },
+                })
+              }
+            >
+              Resume all jobs
+            </button>
+          </div>
+        </div>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={showAutomatic}
+            onChange={(event) => setShowAutomatic(event.target.checked)}
+          />
+          Show automatic jobs
+          <span className="muted small">({showAutomatic ? 0 : hidden} hidden)</span>
+        </label>
+        <ErrorNotice
+          error={jobs.error || roots.error || providers.error || action.error || error}
+        />
+        {jobs.isPending && <Pending />}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>State</th>
+                <th>Progress</th>
+                <th>Scope / error</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {visible?.map((job) => (
+                <tr key={job.id}>
+                  <td>
+                    <strong title={job.id}>
+                      {jobTypes.find((item) => item.id === job.type)?.label || job.type}
+                    </strong>
+                    <small>{new Date(job.created).toLocaleString()}</small>
+                    <small title={new Date(job.updated).toLocaleString()}>
+                      Updated {relativeTime(job.updated)}
+                    </small>
+                  </td>
+                  <td>{job.state}</td>
+                  <td>
+                    <progress
+                      aria-label="Job progress"
+                      value={job.done}
+                      max={Math.max(1, job.total)}
+                    />
+                    <small>
+                      {job.done} / {job.total}
+                    </small>
+                    {job.failed > 0 && <small className="error-text">{job.failed} failed</small>}
+                  </td>
+                  <td>
+                    {roots.data?.find((root) => root.id === job.root_id)?.name ||
+                      (job.root_id ? "Unknown root" : job.work_id || "Bulk")}
+                    <small className="error-text">{job.error}</small>
+                  </td>
+                  <td>
+                    <div className="toolbar">
+                      {jobActions(job.state).map((command) => (
+                        <button
+                          key={command}
+                          className={command === "cancel" ? "danger" : ""}
+                          disabled={action.isPending}
+                          onClick={() =>
+                            action.mutate({
+                              path: `/admin/jobs/${encoded(job.id)}`,
+                              body: { action: command },
+                            })
+                          }
+                        >
+                          {command}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {visible?.length === 0 && (
+          <p className="muted">No {showAutomatic ? "" : "manual "}jobs to show.</p>
+        )}
+      </section>
     </>
   );
 }
@@ -673,7 +878,9 @@ function Offline() {
     setPreview(null);
   }
   return (
-    <>
+    <section className="panel">
+      <h2>Missing items</h2>
+      <p className="muted">Verify missing files or preview removal of their catalog entries.</p>
       <p className="notice">
         An unavailable root is not proof that its works were deleted. Cleanup removes catalog/cache
         records only when the source is still missing on an online, accessible root. Originals are
@@ -809,7 +1016,7 @@ function Offline() {
           </tbody>
         </table>
       </div>
-    </>
+    </section>
   );
 }
 
@@ -819,7 +1026,7 @@ function Moves() {
   return (
     <section className="panel">
       <h2>Possible cross-root moves</h2>
-      <p>
+      <p className="muted">
         Equal size and mtime are only candidate signals, not proof. Confirmation keeps the old work
         ID and metadata, adopts destination permissions, and reindexes only that work.
       </p>
@@ -871,7 +1078,7 @@ function Providers() {
       <ErrorNotice error={providers.error} />
       <section className="panel">
         <h2>Network routing</h2>
-        <p>
+        <p className="muted">
           Provider requests use the server's configured DNS/DoH and proxy policy. No credentials are
           returned to this browser.
         </p>
@@ -1028,6 +1235,7 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
   return (
     <section className="panel">
       <h2>{workId ? "Crawl this work / import JSON" : "Crawl or import local JSON"}</h2>
+      <p className="muted">Select a provider and preview the scope before fetching metadata.</p>
       <form onSubmit={submit}>
         <div className="form-grid">
           <label>
@@ -1084,7 +1292,7 @@ function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: stri
         </div>
       </form>
       <ErrorNotice error={error || action.error || roots.error} />
-      <Result value={result} />
+      <Result value={result} job />
     </section>
   );
 }
@@ -1127,6 +1335,7 @@ function Plugins() {
       ))}
       <section className="panel">
         <h2>Install trusted plugin</h2>
+        <p className="muted">Register a reviewed executable and its manifest.</p>
         <form onSubmit={submit}>
           <label>
             Server executable path
