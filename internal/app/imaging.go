@@ -18,6 +18,7 @@ import (
 
 type Transform struct {
 	Width     int
+	Height    int
 	Quality   int
 	Format    string
 	Thumbnail bool
@@ -51,7 +52,7 @@ func (GoProcessor) Process(ctx context.Context, input PageValue, t Transform, ma
 		return PageValue{}, e
 	}
 	if t.Thumbnail {
-		img = imaging.Fit(img, t.Width, 480, imaging.Lanczos)
+		img = imaging.Fit(img, t.Width, t.thumbnailHeight(), imaging.Lanczos)
 	} else if t.Width > 0 && img.Bounds().Dx() > t.Width {
 		img = imaging.Resize(img, t.Width, 0, imaging.Lanczos)
 	}
@@ -149,4 +150,11 @@ func validateTransform(format string, width, quality int) (Transform, error) {
 		format = "png"
 	}
 	return Transform{Width: width, Quality: quality, Format: strings.ToLower(format)}, nil
+}
+
+func (t Transform) thumbnailHeight() int {
+	if t.Height > 0 {
+		return t.Height
+	}
+	return 480
 }

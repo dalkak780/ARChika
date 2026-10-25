@@ -22,7 +22,12 @@ export function wide(page: Dimensions | undefined) {
 export function known(page: Dimensions | undefined) {
   return !!(page?.width && page?.height);
 }
-export function visiblePages(pages: readonly Dimensions[], index: number, layout = "single") {
+export function visiblePages(
+  pages: readonly Dimensions[],
+  index: number,
+  layout = "single",
+  direction = "ltr",
+) {
   if (!pages.length) return [];
   const first = Math.max(0, Math.min(index, pages.length - 1));
   // Unknown dimensions consume one page: a slow image can never skip its successor.
@@ -31,7 +36,9 @@ export function visiblePages(pages: readonly Dimensions[], index: number, layout
     !wide(pages[first]) &&
     known(pages[first + 1]) &&
     !wide(pages[first + 1])
-    ? [first, first + 1]
+    ? direction === "rtl"
+      ? [first + 1, first]
+      : [first, first + 1]
     : [first];
 }
 export function navigatePage(
@@ -44,7 +51,7 @@ export function navigatePage(
   if (!pages.length) return 0;
   if (action === "home") return 0;
   if (action === "end") return pages.length - 1;
-  if (action === "next") return Math.min(pages.length - 1, (shown.at(-1) ?? index) + 1);
+  if (action === "next") return Math.min(pages.length - 1, Math.max(index, ...shown) + 1);
   if (action === "previous") {
     if (layout !== "spread") return Math.max(0, index - 1);
     // Group backward from the actual current boundary, not from a changing global partition.
@@ -75,26 +82,55 @@ export function keyAction(
     shiftKey?: boolean;
   },
   mode = "paged",
-) {
-  if (
-    event.altKey ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.shiftKey ||
-    ignoresKeys(event.target) ||
-    mode === "scroll"
-  )
-    return null;
-  const actions: Record<string, NavigationAction> = {
-    ArrowRight: "next",
-    PageDown: "next",
-    ArrowLeft: "previous",
-    PageUp: "previous",
-    Home: "home",
-    End: "end",
-  };
-  return actions[event.key] ?? null;
+  direction = "ltr",
+):
+  | NavigationAction
+  | "goto"
+  | "fullscreen"
+  | "layout"
+  | "direction"
+  | "auto"
+  | "overview"
+  | "options"
+  | "help"
+  | "previousWork"
+  | "nextWork"
+  | "back"
+  | null {
+  if (event.altKey || event.ctrlKey || event.metaKey || ignoresKeys(event.target)) return null;
+  const key = event.key.toLowerCase();
+  const controls = {
+    g: "goto",
+    f: "fullscreen",
+    p: "layout",
+    m: "direction",
+    n: "auto",
+    q: "overview",
+    o: "options",
+    "?": "help",
+    ",": "previousWork",
+    ".": "nextWork",
+    backspace: "back",
+  } as const;
+  if (key in controls) return controls[key as keyof typeof controls];
+  if (mode === "scroll") return null;
+  const forward = direction === "rtl" ? "previous" : "next";
+  const backward = direction === "rtl" ? "next" : "previous";
+  if (key === "arrowright" || key === "arrowleft") {
+    const action = key === "arrowright" ? forward : backward;
+    return event.shiftKey ? (action === "next" ? "end" : "home") : action;
+  }
+  if (key === " ") return event.shiftKey ? "previous" : "next";
+  if (event.shiftKey) return null;
+  if (key === "d") return forward;
+  if (key === "a") return backward;
+  if (key === "pagedown") return "next";
+  if (key === "pageup") return "previous";
+  if (key === "home") return "home";
+  if (key === "end") return "end";
+  return null;
 }
+
 export function gestureAction(
   start: GesturePoint | null,
   end: GesturePoint,
@@ -104,8 +140,18 @@ export function gestureAction(
     viewportWidth = 1000,
     left = 0,
     width,
-  }: { mode?: string; zoom?: number; viewportWidth?: number; left?: number; width?: number } = {},
+    direction = "ltr",
+  }: {
+    mode?: string;
+    zoom?: number;
+    viewportWidth?: number;
+    left?: number;
+    width?: number;
+    direction?: string;
+  } = {},
 ): NavigationAction | "chrome" | null {
+  const next = direction === "rtl" ? "previous" : "next";
+  const previous = direction === "rtl" ? "next" : "previous";
   const zoneWidth = width ?? viewportWidth;
   if (!start || start.cancelled || start.touches > 1 || end.touches > 1) return null;
   const dx = end.x - start.x,
@@ -114,7 +160,7 @@ export function gestureAction(
     // Taps use left/centre/right zones for mouse, touch and pen alike.
     if (mode === "scroll" || zoom !== 1 || zoneWidth <= 0) return "chrome";
     const position = (end.x - left) / zoneWidth;
-    return position < 0.23 ? "previous" : position > 0.77 ? "next" : "chrome";
+    return position < 0.23 ? previous : position > 0.77 ? next : "chrome";
   }
   // Swipes ignore screen edges so OS back/forward gestures keep working.
   if (
@@ -127,5 +173,5 @@ export function gestureAction(
     Math.abs(dx) < Math.abs(dy) * 1.7
   )
     return null;
-  return dx < 0 ? "next" : "previous";
+  return dx < 0 ? next : previous;
 }

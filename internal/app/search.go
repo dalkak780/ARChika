@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -83,30 +84,8 @@ func (a *App) targetIDs(ctx context.Context, u User, root string, ids []string, 
 func (a *App) works(w http.ResponseWriter, r *http.Request, u User) {
 	q := r.URL.Query().Get("q")
 	root := r.URL.Query().Get("root")
-	sort := r.URL.Query().Get("sort")
-	if sort == "" {
-		sort = "recent"
-	}
-	column := "w.registered_at"
-	switch sort {
-	case "recent":
-	case "title":
-		column = "al.title_sort"
-	case "mtime":
-		column = "COALESCE(NULLIF(w.modified_at,0),w.mtime)"
-	default:
-		apiError(w, 400, "invalid_sort", "Choose recent, title or mtime")
-		return
-	}
-	direction := r.URL.Query().Get("direction")
-	if direction == "" {
-		direction = "desc"
-		if sort == "title" {
-			direction = "asc"
-		}
-	}
-	if direction != "asc" && direction != "desc" {
-		apiError(w, 400, "invalid_direction", "Choose asc or desc")
+	sort, column, direction, ok := catalogOrder(w, r)
+	if !ok {
 		return
 	}
 	limit, e := optionalInt(r, "limit", 40)
@@ -145,9 +124,8 @@ func (a *App) works(w http.ResponseWriter, r *http.Request, u User) {
 		apiError(w, 503, "database", "Cannot count search results")
 		return
 	}
-	canonical, canonicalArgs := visibleSQL("x", "xr", u)
-	query := "SELECT " + aliasColumns + ",al.title_sort FROM works w JOIN aliases al ON al.id=(SELECT x.id FROM aliases x JOIN roots xr ON xr.id=x.root_id WHERE x.work_id=w.id AND " + canonical + " ORDER BY x.root_id,x.path LIMIT 1) JOIN roots r ON r.id=al.root_id WHERE " + where
-	params := append(canonicalArgs, args...)
+	from, params := catalogFrom(u, where, args)
+	query := "SELECT " + aliasColumns + ",al.title_sort" + from
 	if cursor.ID != "" {
 		operator := ">"
 		if direction == "desc" {
@@ -280,4 +258,102 @@ func (a *App) offline(w http.ResponseWriter, r *http.Request, u User) {
 		out = append(out, map[string]any{"id": id, "title": title, "root_id": root, "relative_path": p, "error_code": code, "index_status": status, "root_status": rs, "alias_status": als, "size": size, "mtime": mtime, "checked_at": checked})
 	}
 	jsonResponse(w, 200, map[string]any{"items": out, "total": len(out)})
+}
+
+func catalogOrder(w http.ResponseWriter, r *http.Request) (string, string, string, bool) {
+	sort := r.URL.Query().Get("sort")
+	if sort == "" {
+		sort = "recent"
+	}
+	column := "w.registered_at"
+	switch sort {
+	case "recent":
+	case "title":
+		column = "al.title_sort"
+	case "mtime":
+		column = "COALESCE(NULLIF(w.modified_at,0),w.mtime)"
+	default:
+		apiError(w, 400, "invalid_sort", "Choose recent, title or mtime")
+		return "", "", "", false
+	}
+	direction := r.URL.Query().Get("direction")
+	if direction == "" {
+		direction = "desc"
+		if sort == "title" {
+			direction = "asc"
+		}
+	}
+	if direction != "asc" && direction != "desc" {
+		apiError(w, 400, "invalid_direction", "Choose asc or desc")
+		return "", "", "", false
+	}
+	return sort, column, direction, true
+}
+
+func catalogFrom(u User, where string, args []any) (string, []any) {
+	canonical, canonicalArgs := visibleSQL("x", "xr", u)
+	return " FROM works w JOIN aliases al ON al.id=(SELECT x.id FROM aliases x JOIN roots xr ON xr.id=x.root_id WHERE x.work_id=w.id AND " + canonical + " ORDER BY x.root_id,x.path LIMIT 1) JOIN roots r ON r.id=al.root_id WHERE " + where, append(canonicalArgs, args...)
+}
+
+type neighborWork struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+func (a *App) neighbors(w http.ResponseWriter, r *http.Request, u User) {
+	_, column, direction, ok := catalogOrder(w, r)
+	if !ok {
+		return
+	}
+	where, args, e := catalogFilter(u, r.URL.Query().Get("root"), r.URL.Query().Get("q"), nil)
+	if e != nil {
+		apiError(w, 400, "invalid_query", e.Error())
+		return
+	}
+	from, params := catalogFrom(u, where, args)
+	out := struct {
+		Previous *neighborWork `json:"previous"`
+		Next     *neighborWork `json:"next"`
+	}{}
+	tx, e := a.DB.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
+	if e != nil {
+		apiError(w, 503, "database", "Cannot load neighbors")
+		return
+	}
+	defer tx.Rollback()
+	var key any
+	id := r.PathValue("id")
+	e = tx.QueryRowContext(r.Context(), "SELECT "+column+from+" AND w.id=?", append(append([]any{}, params...), id)...).Scan(&key)
+	if errors.Is(e, sql.ErrNoRows) {
+		jsonResponse(w, 200, out)
+		return
+	}
+	if e != nil {
+		apiError(w, 503, "database", "Cannot load neighbors")
+		return
+	}
+	for i, target := range []**neighborWork{&out.Previous, &out.Next} {
+		order, operator := direction, ">"
+		if i == 0 {
+			order = "desc"
+			if direction == "desc" {
+				order = "asc"
+			}
+		}
+		if order == "desc" {
+			operator = "<"
+		}
+		query := "SELECT w.id,al.title" + from + " AND (" + column + ",w.id) " + operator + " (?,?) ORDER BY " + column + " " + order + ",w.id " + order + " LIMIT 1"
+		v := &neighborWork{}
+		e = tx.QueryRowContext(r.Context(), query, append(append([]any{}, params...), key, id)...).Scan(&v.ID, &v.Title)
+		if errors.Is(e, sql.ErrNoRows) {
+			continue
+		}
+		if e != nil {
+			apiError(w, 503, "database", "Cannot load neighbors")
+			return
+		}
+		*target = v
+	}
+	jsonResponse(w, 200, out)
 }

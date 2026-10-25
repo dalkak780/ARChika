@@ -1,5 +1,5 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import type { Page, WorkDetail } from "./types.ts";
+import type { Page, WorkDetail, LibrarySearch } from "./types.ts";
 import type { Dimensions, GesturePoint, NavigationAction } from "./navigation.ts";
 import React, {
   useCallback,
@@ -10,8 +10,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Link, getRouteApi, useNavigate, useLocation, useRouter } from "@tanstack/react-router";
-import { VirtualContinuousPages } from "./virtual.tsx";
+import { getRouteApi, useNavigate, useLocation, useRouter } from "@tanstack/react-router";
+import { VirtualContinuousPages, VirtualPageOverview } from "./virtual.tsx";
 import { trimOldest } from "./lru.ts";
 import { useAPI, useAction, useAuth, api, encoded, ErrorNotice } from "./api.tsx";
 import {
@@ -28,6 +28,19 @@ import { pageCache, pageKey } from "./page-cache.ts";
 import type { CachedPage } from "./page-cache.ts";
 import { libraryOrigins } from "./library.tsx";
 import { WorkMetadata } from "./admin.tsx";
+import { IconButton, Icon } from "./icons.tsx";
+import { ReaderPanel, PageThumbnail, PageIndicator } from "./reader-panels.tsx";
+
+const defaultOrigin: LibrarySearch = {
+  q: "",
+  sort: "recent",
+  direction: "desc",
+  root: "",
+  page: 1,
+  limit: 40,
+  view: "pages",
+};
+type Neighbor = { id: string; title: string };
 type OnDimensions = (ordinal: number, width: number, height: number) => void;
 interface PageImageProps {
   workId: string;
@@ -231,6 +244,18 @@ export default function Reader() {
     router = useRouter();
   const { user } = useAuth(),
     action = useAction();
+  const preferenceAction = useAction();
+  const origin = libraryOrigins.get(workId) ?? defaultOrigin;
+  const neighborQuery = new URLSearchParams({
+    q: origin.q,
+    sort: origin.sort,
+    direction: origin.direction,
+    root: origin.root,
+  }).toString();
+  const neighbors = useAPI<{ previous: Neighbor | null; next: Neighbor | null }>(
+    ["neighbors", workId, neighborQuery],
+    `/works/${encoded(workId)}/neighbors?${neighborQuery}`,
+  );
   const result = useAPI<WorkDetail>(["work", workId], `/works/${encoded(workId)}`, {
     staleTime: 60_000,
   });
@@ -248,6 +273,50 @@ export default function Reader() {
   const [fit, setFit] = useState(user.preferences?.fit || "viewport"),
     [resize, setResize] = useState(user.preferences?.resize_width || 0),
     [zoom, setZoom] = useState(1);
+  const [readingDirection, setReadingDirection] = useState(
+    user.preferences?.reading_direction ?? "ltr",
+  );
+  const [preloadCount, setPreloadCount] = useState(user.preferences?.preload_count ?? 2);
+  const [autoSeconds, setAutoSeconds] = useState(user.preferences?.auto_next_seconds ?? 10);
+  const [auto, setAuto] = useState(() => sessionStorage.getItem("reader-auto") === "1");
+  const [remaining, setRemaining] = useState(autoSeconds);
+  const [overlay, setOverlay] = useState<"overview" | "options" | "help" | null>(null);
+  const [editingPage, setEditingPage] = useState(false);
+  const [hidden, setHidden] = useState(document.hidden);
+  const resetCountdown = useCallback(() => setRemaining(autoSeconds), [autoSeconds]);
+  const preferenceBody = {
+    reader_mode: mode,
+    layout,
+    fit,
+    resize_width: resize,
+    reading_direction: readingDirection,
+    preload_count: preloadCount,
+    auto_next_seconds: autoSeconds,
+  };
+  const preferenceJSON = JSON.stringify(preferenceBody);
+  const lastSavedPreferences = useRef(preferenceJSON);
+  const savePreferences = useEffectEvent(() => {
+    lastSavedPreferences.current = preferenceJSON;
+    preferenceAction.mutate({
+      path: "/preferences",
+      method: "PUT",
+      body: preferenceBody,
+      invalidate: [],
+    });
+  });
+  useEffect(() => {
+    if (preferenceJSON === lastSavedPreferences.current || preferenceAction.isPending) return;
+    const timer = setTimeout(() => savePreferences(), 500);
+    return () => clearTimeout(timer);
+  }, [preferenceJSON, preferenceAction.isPending]);
+  useEffect(() => {
+    const changed = () => setHidden(document.hidden);
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
+  useEffect(() => {
+    sessionStorage.removeItem("reader-auto");
+  }, [workId]);
   const [chrome, setChrome] = useState(true),
     [metadata, setMetadata] = useState(false),
     [dimensions, setDimensions] = useState<Record<number, Dimensions>>({}),
@@ -315,6 +384,7 @@ export default function Reader() {
         setChrome((value) => !value);
         return;
       }
+      resetCountdown();
       const next = navigatePage(
         pages,
         pageIndex,
@@ -332,7 +402,7 @@ export default function Reader() {
       lastNavigation.current = { time: now, index: next };
       setIndex(next);
     },
-    [pages, pageIndex, layout, mode],
+    [pages, pageIndex, layout, mode, resetCountdown],
   );
   function exitImmersive() {
     setChrome(true);
@@ -353,24 +423,115 @@ export default function Reader() {
       search: (old) => ({ ...old, page: pageIndex + 1, immersive: true }),
     });
   }
-  const exitImmersiveOnKey = useEffectEvent(exitImmersive);
-  useEffect(() => {
-    function key(event: KeyboardEvent) {
-      if (event.key === "Escape" && (metadata || !ignoresKeys(event.target))) {
-        if (metadata) setMetadata(false);
-        else if (search.immersive) exitImmersiveOnKey();
-        else setChrome(true);
-        return;
-      }
-      const action = keyAction(event, mode);
-      if (action && !metadata) {
-        event.preventDefault();
-        go(action);
-      }
+  function jump(index: number) {
+    resetCountdown();
+    setIndex(index);
+  }
+  function backToLibrary() {
+    void navigate({ to: "/", search: origin });
+  }
+  function openWork(neighbor: Neighbor | null | undefined, resume = false) {
+    if (!neighbor) return;
+    libraryOrigins.set(neighbor.id, origin);
+    trimOldest(libraryOrigins, 64);
+    setAuto(resume);
+    resetCountdown();
+    if (resume) sessionStorage.setItem("reader-auto", "1");
+    else sessionStorage.removeItem("reader-auto");
+    void navigate({
+      to: "/read/$workId",
+      params: { workId: neighbor.id },
+      search: { page: 1, immersive: search.immersive },
+    });
+  }
+  const onKey = useEffectEvent((event: KeyboardEvent) => {
+    if (overlay || metadata) return;
+    if (event.key === "Escape" && !ignoresKeys(event.target)) {
+      if (search.immersive) exitImmersive();
+      else setChrome(true);
+      return;
     }
+    const action = keyAction(event, mode, readingDirection);
+    if (!action) return;
+    event.preventDefault();
+    switch (action) {
+      case "goto":
+        setChrome(true);
+        setEditingPage(true);
+        break;
+      case "fullscreen":
+        void fullscreen();
+        break;
+      case "layout":
+        setLayout((value) => (value === "single" ? "spread" : "single"));
+        break;
+      case "direction":
+        setReadingDirection((value) => (value === "ltr" ? "rtl" : "ltr"));
+        break;
+      case "auto":
+        resetCountdown();
+        setAuto((value) => !value);
+        break;
+      case "overview":
+      case "options":
+      case "help":
+        setOverlay(action);
+        break;
+      case "previousWork":
+        openWork(neighbors.data?.previous);
+        break;
+      case "nextWork":
+        openWork(neighbors.data?.next);
+        break;
+      case "back":
+        backToLibrary();
+        break;
+      default:
+        go(action);
+    }
+  });
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => onKey(event);
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [go, mode, metadata, search.immersive]);
+  }, []);
+  const autoAdvance = useEffectEvent(() => {
+    if (remaining > 1) {
+      setRemaining(remaining - 1);
+      return;
+    }
+    if (!pages.length) {
+      setAuto(false);
+      return;
+    }
+    const last = mode === "scroll" ? pageIndex : Math.max(...shown);
+    if (last < pages.length - 1) go("next");
+    else if (neighbors.data?.next) openWork(neighbors.data.next, true);
+    else {
+      setAuto(false);
+      sessionStorage.removeItem("reader-auto");
+    }
+  });
+  const countdownKey = `${workId}:${pageIndex}:${autoSeconds}`;
+  const [previousCountdownKey, setPreviousCountdownKey] = useState(countdownKey);
+  if (previousCountdownKey !== countdownKey) {
+    setPreviousCountdownKey(countdownKey);
+    setRemaining(autoSeconds);
+  }
+  useEffect(() => {
+    if (
+      !auto ||
+      hidden ||
+      overlay ||
+      metadata ||
+      editingPage ||
+      result.isPending ||
+      neighbors.isPending
+    )
+      return;
+    const timer = setInterval(() => autoAdvance(), 1000);
+    return () => clearInterval(timer);
+  }, [auto, hidden, overlay, metadata, editingPage, result.isPending, neighbors.isPending]);
   useEffect(() => () => pageCache.clearWork(workId), [workId]);
   useEffect(() => {
     const visible = mode === "scroll" ? [pageIndex] : shown;
@@ -383,9 +544,12 @@ export default function Reader() {
       return;
     const controller = new AbortController();
     const end = visible.at(-1) ?? pageIndex;
-    const ahead = pages.slice(end + 1, end + 1 + (layout === "spread" ? 4 : 2));
+    const ahead = pages.slice(
+      end + 1,
+      end + 1 + preloadCount * (layout === "spread" && mode === "paged" ? 2 : 1),
+    );
     const previous = pages[pageIndex - 1];
-    if (previous) ahead.push(previous);
+    if (previous && preloadCount > 0) ahead.push(previous);
     async function preload() {
       for (const page of ahead) {
         if (controller.signal.aborted) return;
@@ -399,7 +563,7 @@ export default function Reader() {
     }
     void preload();
     return () => controller.abort();
-  }, [workId, pageIndex, mode, layout, shown, pages, resize, loaded]);
+  }, [workId, pageIndex, mode, layout, shown, pages, resize, loaded, preloadCount]);
   const prefetchPage = useEffectEvent(() => pages[pageIndex]?.ordinal);
   useEffect(() => {
     const ordinal = prefetchPage();
@@ -468,14 +632,6 @@ export default function Reader() {
     }
     immersive();
   }
-  function preferences() {
-    action.mutate({
-      path: "/preferences",
-      invalidate: [],
-      method: "PUT",
-      body: { reader_mode: mode, layout, resize_width: Number(resize), fit },
-    });
-  }
   function pointerCancel() {
     pointer.current = null;
   }
@@ -522,6 +678,7 @@ export default function Reader() {
       },
       {
         mode,
+        direction: readingDirection,
         zoom: zoom * (window.visualViewport?.scale || 1),
         viewportWidth: window.innerWidth,
         left: bounds?.left ?? 0,
@@ -532,8 +689,20 @@ export default function Reader() {
   }
   const fullscreenView = browserFullscreen || search.immersive;
   const zoomStyle: CSSProperties & { "--zoom": number } = { "--zoom": zoom };
-  const origin = libraryOrigins.get(workId),
-    work = result.data?.work;
+  const work = result.data?.work;
+  const currentPage = pages[pageIndex];
+  const cachedPage = currentPage
+    ? (pageCache.get(pageKey(workId, currentPage, resize, true)) ??
+      pageCache.get(pageKey(workId, currentPage, resize)))
+    : undefined;
+  function cover(entryId: string) {
+    action.mutate({
+      path: `/works/${encoded(workId)}/cover`,
+      method: "PUT",
+      body: { entry_id: entryId },
+      invalidate: [["work", workId], ["works"], ["works-infinite"]],
+    });
+  }
   // Read optional fields once; compiled memo dependencies must not dereference an unloaded work.
   const favorite = work?.favorite ?? false;
   const nextPage = pages[pageIndex + 1],
@@ -545,137 +714,240 @@ export default function Reader() {
       className={`reader ${fullscreenView ? "immersive" : ""} ${chrome || !fullscreenView ? "" : "chrome-hidden"} fit-${fit}`}
     >
       <header className="reader-toolbar">
-        <div className="toolbar">
-          <button
+        <div className="toolbar reader-main-toolbar">
+          <IconButton icon="close" label="Close reader" onClick={backToLibrary} />
+          <strong className="reader-title" title={work?.title || "Reader"}>
+            {work?.title || "Reader"}
+          </strong>
+          <IconButton
+            icon={fullscreenView ? "exitFullscreen" : "fullscreen"}
+            label={fullscreenView ? "Exit fullscreen (F)" : "Fullscreen (F)"}
+            onClick={() => void fullscreen()}
+          />
+          <IconButton
+            icon="overview"
+            label="Page overview (Q)"
+            onClick={() => setOverlay("overview")}
+          />
+          <IconButton
+            icon="settings"
+            label="Reader options (O)"
+            onClick={() => setOverlay("options")}
+          />
+          <IconButton icon="help" label="Reader help (?)" onClick={() => setOverlay("help")} />
+          <IconButton
+            icon="favorite"
+            className={favorite ? "primary" : ""}
+            label={favorite ? "Remove favorite" : "Add favorite"}
+            aria-pressed={favorite}
+            disabled={!work || action.isPending}
             onClick={() =>
-              fullscreenView
-                ? void fullscreen()
-                : origin
-                  ? router.history.back()
-                  : navigate({ to: "/" })
+              action.mutate({
+                path: `/works/${encoded(workId)}/favorite`,
+                method: "PUT",
+                body: { favorite: !favorite },
+                invalidate: [["work", workId], ["works"], ["works-infinite"]],
+              })
             }
-          >
-            {fullscreenView ? "Exit fullscreen" : "← Close"}
-          </button>
-          <Link to="/" search={origin || {}}>
-            Library
-          </Link>
-          <strong className="reader-title">{work?.title || "Reader"}</strong>
-          {!fullscreenView && <button onClick={() => void fullscreen()}>Fullscreen</button>}
-        </div>
-        <div className="toolbar reader-options">
-          <label>
-            Mode
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value === "scroll" ? "scroll" : "paged")}
-            >
-              <option value="paged">Paged</option>
-              <option value="scroll">Continuous</option>
-            </select>
-          </label>
-          <label>
-            Layout
-            <select
-              value={layout}
-              onChange={(e) => setLayout(e.target.value === "spread" ? "spread" : "single")}
-            >
-              <option value="single">Single</option>
-              <option value="spread">Two-page spread</option>
-            </select>
-          </label>
-          <label>
-            Fit
-            <select
-              value={fit}
-              onChange={(e) =>
-                setFit(
-                  e.target.value === "width"
-                    ? "width"
-                    : e.target.value === "original"
-                      ? "original"
-                      : "viewport",
-                )
-              }
-            >
-              <option value="viewport">Viewport</option>
-              <option value="width">Width</option>
-            </select>
-          </label>
-          <label>
-            Zoom
-            <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
-              {[0.75, 1, 1.25, 1.5, 2, 3].map((value) => (
-                <option key={value} value={value}>
-                  {Math.round(value * 100)}%
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Resize
-            <select value={resize} onChange={(e) => setResize(Number(e.target.value))}>
-              <option value="0">Original dimensions</option>
-              {[800, 1200, 1600, 2400].map((value) => (
-                <option key={value} value={value}>
-                  {value}px wide
-                </option>
-              ))}
-            </select>
-          </label>
-          <>
-            <button onClick={preferences} disabled={action.isPending}>
-              Save preferences
-            </button>
-            <button
-              disabled={!work || action.isPending}
-              onClick={() =>
-                action.mutate({
-                  path: `/works/${encoded(workId)}/favorite`,
-                  method: "PUT",
-                  body: { favorite: !favorite },
-                  invalidate: [["work", workId], ["works"], ["works-infinite"]],
-                })
-              }
-            >
-              {favorite ? "Remove favorite" : "Add favorite"}
-            </button>
-          </>
-          <button onClick={() => setMetadata((value) => !value)} aria-expanded={metadata}>
-            Metadata
-          </button>
-          {pages.length > 0 && (
-            <>
-              <button
-                onClick={() => {
-                  const current = pages[pageIndex];
-                  if (!current) return;
-                  action.mutate({
-                    path: `/works/${encoded(workId)}/cover`,
-                    method: "PUT",
-                    invalidate: [["work", workId], ["works"], ["works-infinite"]],
-                    body: { entry_id: current.entry_id },
-                  });
-                }}
-              >
-                Use page as cover
-              </button>
-              <button
-                onClick={() =>
-                  action.mutate({
-                    path: `/works/${encoded(workId)}/cover`,
-                    method: "PUT",
-                    invalidate: [["work", workId], ["works"], ["works-infinite"]],
-                    body: { entry_id: "" },
-                  })
-                }
-              >
-                Default cover
-              </button>
-            </>
-          )}
+          />
+          <IconButton icon="metadata" label="Work metadata" onClick={() => setMetadata(true)} />
         </div>
       </header>
+      {overlay === "options" && (
+        <ReaderPanel title="Reader options" close={() => setOverlay(null)}>
+          <div className="reader-settings">
+            <label>
+              Mode
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value === "scroll" ? "scroll" : "paged")}
+              >
+                <option value="paged">Paged</option>
+                <option value="scroll">Continuous</option>
+              </select>
+            </label>
+            <label>
+              Layout
+              <select
+                value={layout}
+                onChange={(e) => setLayout(e.target.value === "spread" ? "spread" : "single")}
+              >
+                <option value="single">Single</option>
+                <option value="spread">Two-page spread</option>
+              </select>
+            </label>
+            <label>
+              Fit
+              <select
+                value={fit}
+                onChange={(e) =>
+                  setFit(
+                    e.target.value === "height"
+                      ? "height"
+                      : e.target.value === "width"
+                        ? "width"
+                        : e.target.value === "original"
+                          ? "original"
+                          : "viewport",
+                  )
+                }
+              >
+                <option value="viewport">Viewport</option>
+                <option value="width">Width</option>
+                <option value="height">Height</option>
+                <option value="original">Original</option>
+              </select>
+            </label>
+            <label>
+              Zoom
+              <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
+                {[0.75, 1, 1.25, 1.5, 2, 3].map((value) => (
+                  <option key={value} value={value}>
+                    {Math.round(value * 100)}%
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Resize
+              <select value={resize} onChange={(e) => setResize(Number(e.target.value))}>
+                <option value="0">Original dimensions</option>
+                {[800, 1200, 1600, 2400].map((value) => (
+                  <option key={value} value={value}>
+                    {value}px wide
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>
+                <Icon name="direction" /> Reading direction
+              </span>
+              <select
+                value={readingDirection}
+                onChange={(event) =>
+                  setReadingDirection(event.target.value === "rtl" ? "rtl" : "ltr")
+                }
+              >
+                <option value="ltr">Left to right</option>
+                <option value="rtl">Right to left</option>
+              </select>
+            </label>
+            <label>
+              Preload pages
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={preloadCount}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  if (Number.isInteger(value) && value >= 0 && value <= 10) setPreloadCount(value);
+                }}
+              />
+            </label>
+            <label>
+              Auto-next interval (seconds)
+              <input
+                type="number"
+                min={2}
+                max={120}
+                value={autoSeconds}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  if (Number.isInteger(value) && value >= 2 && value <= 120) setAutoSeconds(value);
+                }}
+              />
+            </label>
+          </div>
+          <p className="muted" role="status">
+            {preferenceAction.isPending
+              ? "Saving preferences…"
+              : "Preferences save automatically. Zoom applies to this session."}
+          </p>
+          <ErrorNotice error={preferenceAction.error} />
+          {currentPage && (
+            <a
+              href={`/api/works/${encoded(workId)}/pages/${currentPage.ordinal}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open original
+            </a>
+          )}
+        </ReaderPanel>
+      )}
+      {overlay === "overview" && (
+        <ReaderPanel title="Page overview" close={() => setOverlay(null)}>
+          <button disabled={action.isPending} onClick={() => cover("")}>
+            Reset cover
+          </button>
+          <ErrorNotice error={action.error} />
+          <VirtualPageOverview
+            pages={pages}
+            index={pageIndex}
+            renderPage={(page, index) => (
+              <div className={`overview-tile ${index === pageIndex ? "current" : ""}`}>
+                <button
+                  className="thumbnail-button"
+                  aria-label={`Go to page ${index + 1}`}
+                  aria-current={index === pageIndex ? "page" : undefined}
+                  onClick={() => {
+                    jump(index);
+                    setOverlay(null);
+                  }}
+                >
+                  <PageThumbnail workId={workId} page={page} />
+                  <span>{index + 1}</span>
+                </button>
+                <button
+                  className="cover-button"
+                  disabled={action.isPending}
+                  onClick={() => cover(page.entry_id)}
+                  aria-label={`Use page ${index + 1} as cover`}
+                >
+                  Use as cover
+                </button>
+              </div>
+            )}
+          />
+        </ReaderPanel>
+      )}
+      {overlay === "help" && (
+        <ReaderPanel title="Reader help" close={() => setOverlay(null)}>
+          <dl className="reader-shortcuts">
+            <dt>← / →, A / D</dt>
+            <dd>Previous / next page. Reversed in right-to-left mode.</dd>
+            <dt>Space / Shift+Space</dt>
+            <dd>Next / previous page.</dd>
+            <dt>Home / End</dt>
+            <dd>
+              First / last page. Shift+← / Shift+→ also jump to the ends, reversed in right-to-left
+              mode.
+            </dd>
+            <dt>G</dt>
+            <dd>Go to page. Enter jumps; Escape cancels.</dd>
+            <dt>F / P / M / N</dt>
+            <dd>Fullscreen / single or spread / reading direction / auto-next.</dd>
+            <dt>Q / O / ?</dt>
+            <dd>Overview / options / help. Escape or a click outside closes a panel.</dd>
+            <dt>, / .</dt>
+            <dd>Previous / next work in the library search.</dd>
+            <dt>Backspace</dt>
+            <dd>Return to the library.</dd>
+          </dl>
+          <p>
+            Tap the left or right edge to turn pages; tap the centre to show or hide fullscreen
+            controls. Swipe horizontally to turn pages. Edges and swipes reverse in right-to-left
+            mode. Continuous reading keeps native scrolling. Shortcuts are ignored while typing.
+          </p>
+          <p>
+            Auto-next pauses while a panel is open or this tab is hidden. It continues to the next
+            work when available.
+          </p>
+        </ReaderPanel>
+      )}
       <button
         className="reveal-chrome"
         onClick={() => setChrome((value) => !value)}
@@ -683,13 +955,14 @@ export default function Reader() {
       >
         {chrome ? "Hide controls" : "☰ Controls / Exit"}
       </button>
-      <ErrorNotice error={result.error || action.error} />
+      <ErrorNotice
+        error={result.error || action.error || preferenceAction.error || neighbors.error}
+      />
       {result.isPending && <ReaderBackdrop key={workId} workId={workId} />}
       {metadata && (
-        <section className="metadata-panel panel" role="dialog" aria-label="Work metadata">
-          <button onClick={() => setMetadata(false)}>Close metadata</button>
+        <ReaderPanel title="Work metadata" close={() => setMetadata(false)}>
           <WorkMetadata workId={workId} />
-        </section>
+        </ReaderPanel>
       )}
       {result.error && user.admin && (
         <button
@@ -710,7 +983,7 @@ export default function Reader() {
               workId={workId}
               pages={pages}
               index={pageIndex}
-              setIndex={setIndex}
+              setIndex={jump}
               resize={resize}
               zoom={zoom}
               onDimensions={dimensionsLoaded}
@@ -728,7 +1001,7 @@ export default function Reader() {
               onLostPointerCapture={pointerCancel}
             >
               <div className={`spread ${shown.length === 2 ? "two" : ""}`} style={zoomStyle}>
-                {shown.map((i, slot) => {
+                {visiblePages(pages, pageIndex, layout, readingDirection).map((i, slot) => {
                   const page = pages[i];
                   return page ? (
                     <PageImage
@@ -759,32 +1032,77 @@ export default function Reader() {
             </div>
           )}
           <footer className="reader-footer">
-            <button onClick={() => go("previous")} disabled={pageIndex === 0}>
-              ← Previous
-            </button>
-            <label>
-              Page
-              <input
-                type="number"
-                min="1"
-                max={pages.length}
-                value={pageIndex + 1}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (value >= 1 && value <= pages.length) setIndex(value - 1);
-                }}
-              />
-            </label>
-            <span role="status">
-              {mode === "paged" && shown.length > 1 ? `–${lastShown + 1} ` : ""}
-              of {pages.length}
-            </span>
-            <button
-              onClick={() => go("next")}
-              disabled={(mode === "paged" ? lastShown : pageIndex) >= pages.length - 1}
+            <nav
+              className="reader-navigation"
+              aria-label="Page navigation"
+              dir={mode === "paged" ? readingDirection : "ltr"}
             >
-              Next →
-            </button>
+              {neighbors.data?.previous && (
+                <IconButton
+                  icon="previousWork"
+                  label={`Previous work: ${neighbors.data.previous.title} (,)`}
+                  onClick={() => openWork(neighbors.data?.previous)}
+                />
+              )}
+              <IconButton
+                icon="first"
+                label="First page (Home)"
+                disabled={pageIndex === 0}
+                onClick={() => go("home")}
+              />
+              <IconButton
+                icon="previous"
+                label="Previous page"
+                disabled={pageIndex === 0}
+                onClick={() => go("previous")}
+              />
+              <PageIndicator
+                index={pageIndex}
+                count={pages.length}
+                editing={editingPage}
+                setEditing={setEditingPage}
+                jump={jump}
+              />
+              <IconButton
+                icon="next"
+                label="Next page"
+                disabled={(mode === "paged" ? lastShown : pageIndex) >= pages.length - 1}
+                onClick={() => go("next")}
+              />
+              <IconButton
+                icon="last"
+                label="Last page (End)"
+                disabled={(mode === "paged" ? lastShown : pageIndex) >= pages.length - 1}
+                onClick={() => go("end")}
+              />
+              {neighbors.data?.next && (
+                <IconButton
+                  icon="nextWork"
+                  label={`Next work: ${neighbors.data.next.title} (.)`}
+                  onClick={() => openWork(neighbors.data?.next)}
+                />
+              )}
+            </nav>
+            <div className="reader-file-row">
+              <small className="reader-file-info" title={currentPage?.entry}>
+                {currentPage?.entry}
+                {currentPage?.width && currentPage.height
+                  ? ` · ${currentPage.width} × ${currentPage.height}`
+                  : ""}
+                {cachedPage ? ` · ${(cachedPage.blob.size / 1024).toFixed(1)} KiB` : ""}
+              </small>
+              <IconButton
+                icon={auto ? "pause" : "play"}
+                label={auto ? "Pause auto-next (N)" : "Start auto-next (N)"}
+                aria-pressed={auto}
+                onClick={() => {
+                  resetCountdown();
+                  setAuto((value) => !value);
+                }}
+              >
+                {auto ? `${remaining}s` : null}
+              </IconButton>
+            </div>
           </footer>
         </>
       ) : (

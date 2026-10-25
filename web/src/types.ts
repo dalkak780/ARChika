@@ -2,7 +2,10 @@
 export interface Preferences {
   reader_mode?: "paged" | "scroll";
   layout?: "single" | "spread";
-  fit?: "viewport" | "width" | "original";
+  fit?: "viewport" | "width" | "height" | "original";
+  reading_direction?: "ltr" | "rtl";
+  preload_count?: number;
+  auto_next_seconds?: number;
   resize_width?: number;
 }
 export interface User {

@@ -41,7 +41,7 @@ func (VipsProcessor) Process(ctx context.Context, input PageValue, t Transform, 
 		scale = min(scale, float64(t.Width)/float64(img.Width()))
 	}
 	if t.Thumbnail {
-		scale = min(scale, 480.0/float64(img.Height()))
+		scale = min(scale, float64(t.thumbnailHeight())/float64(img.Height()))
 	}
 	if scale < 1 {
 		e = img.Resize(scale, vips.KernelLanczos3)

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	ar "archika/internal/archive"
@@ -116,12 +117,23 @@ func (a *App) loadPage(ctx context.Context, u User, al Alias, p ar.Entry, t Tran
 		return PageValue{}, e
 	}
 	if t.Format != "" || t.Width > 0 {
-		key := fmt.Sprintf("resized-page/%s/%d/%s/%s/%d/%d/%s/%t", al.WorkID, al.Version, p.ID, newImageProcessor().Version(), t.Width, t.Quality, t.Format, t.Thumbnail)
+		key := fmt.Sprintf("resized-page/%s/%d/%s/%s/%d/%d/%d/%s/%t", al.WorkID, al.Version, p.ID, newImageProcessor().Version(), t.Width, t.Height, t.Quality, t.Format, t.Thumbnail)
 		v, e = a.cache.Load(cacheContext, key, true, func(shared context.Context) (PageValue, error) {
-			select {
-			case a.transform <- struct{}{}:
-			case <-shared.Done():
-				return PageValue{}, shared.Err()
+			if background(shared) && !promoted(shared) {
+				if a.interactive.Load() > 0 {
+					return PageValue{}, errPageBusy
+				}
+				select {
+				case a.transform <- struct{}{}:
+				default:
+					return PageValue{}, errPageBusy
+				}
+			} else {
+				select {
+				case a.transform <- struct{}{}:
+				case <-shared.Done():
+					return PageValue{}, shared.Err()
+				}
 			}
 			defer func() { <-a.transform }()
 			return processImage(shared, v, t, a.Config.MaxPixels, int64(a.Config.PageBytes), false)
@@ -216,13 +228,15 @@ func (a *App) writeImage(w http.ResponseWriter, r *http.Request, v PageValue, ke
 	sum := sha256.Sum256([]byte(key))
 	etag := "\"" + hex.EncodeToString(sum[:]) + "\""
 	w.Header().Set("Content-Type", v.MIME)
-	w.Header().Set("Cache-Control", "private, no-cache")
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "private, no-cache")
+	}
 	w.Header().Set("ETag", etag)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if v.Still {
 		w.Header().Set("X-ARChika-Still-Fallback", "true")
 	}
-	if r.Header.Get("If-None-Match") == etag {
+	if matchesETag(r.Header.Get("If-None-Match"), etag) {
 		w.WriteHeader(304)
 		return
 	}
@@ -392,4 +406,78 @@ func (a *App) coverHTTP(w http.ResponseWriter, r *http.Request, u User) {
 		return
 	}
 	jsonResponse(w, 200, map[string]bool{"ok": true})
+}
+
+func matchesETag(header, etag string) bool {
+	for _, tag := range strings.Split(header, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag == "*" || strings.TrimPrefix(tag, "W/") == etag {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) pageThumbnailHTTP(w http.ResponseWriter, r *http.Request, u User) {
+	ctx := context.WithValue(r.Context(), backgroundKey{}, true)
+	al, e := a.AuthorizedAlias(ctx, u, r.PathValue("id"))
+	if e != nil {
+		apiError(w, 404, "not_found", "Work unavailable")
+		return
+	}
+	ordinal, e := strconv.Atoi(r.PathValue("page"))
+	if e != nil || ordinal < 0 {
+		apiError(w, 404, "not_found", "Page unavailable")
+		return
+	}
+	select {
+	case a.thumbnailQueue <- struct{}{}:
+		defer func() { <-a.thumbnailQueue }()
+	default:
+		w.Header().Set("Retry-After", "2")
+		apiError(w, 503, "busy", "Thumbnail queue is full")
+		return
+	}
+	select {
+	case a.thumbnails <- struct{}{}:
+		defer func() { <-a.thumbnails }()
+	case <-ctx.Done():
+		return
+	}
+	if e = a.ensureIndex(ctx, al); e != nil {
+		apiError(w, 409, "index_unavailable", "Page index is unavailable")
+		return
+	}
+	p, e := a.page(ctx, al, ordinal)
+	if e != nil {
+		apiError(w, 404, "not_found", "Page unavailable")
+		return
+	}
+	key := fmt.Sprintf("page-thumb/%s/%d/%s/%s/200x300", al.WorkID, al.Version, p.ID, newImageProcessor().Version())
+	v, e := a.cache.Load(ctx, key, true, func(shared context.Context) (PageValue, error) {
+		return a.loadPage(shared, u, al, p, Transform{Width: 200, Height: 300, Quality: 80, Format: "png", Thumbnail: true}, true)
+	})
+	if e != nil {
+		if permanentThumbnailError(e) {
+			apiError(w, 415, "unsupported", "Page thumbnail is unsupported")
+			return
+		}
+		if errors.Is(e, errPageBusy) {
+			w.Header().Set("Retry-After", "2")
+			apiError(w, 503, "busy", "Page work queue is full")
+			return
+		}
+		apiError(w, 503, "thumbnail_unavailable", "Page thumbnail is unavailable")
+		return
+	}
+	if al, e = a.readableAlias(ctx, u, al.WorkID, al.Version); e != nil {
+		apiError(w, 404, "not_found", "Work unavailable")
+		return
+	}
+	if e = a.verifyDirectoryPage(ctx, al, p); e != nil {
+		apiError(w, 404, "not_found", "Page unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	a.writeImage(w, r, v, key)
 }

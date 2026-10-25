@@ -282,8 +282,23 @@ func (a *App) preferences(w http.ResponseWriter, r *http.Request, u User) {
 				return
 			}
 		case "fit":
-			if v != "viewport" && v != "width" && v != "original" {
+			if v != "viewport" && v != "width" && v != "height" && v != "original" {
 				apiError(w, 400, "invalid_preference", "Invalid fit")
+				return
+			}
+		case "reading_direction":
+			if v != "ltr" && v != "rtl" {
+				apiError(w, 400, "invalid_preference", "Invalid reading direction")
+				return
+			}
+		case "preload_count", "auto_next_seconds":
+			n, ok := v.(float64)
+			low, high := 0, 10
+			if k == "auto_next_seconds" {
+				low, high = 2, 120
+			}
+			if !ok || n < float64(low) || n > float64(high) || n != float64(int(n)) {
+				apiError(w, 400, "invalid_preference", "Invalid integer preference")
 				return
 			}
 		case "resize_width":

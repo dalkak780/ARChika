@@ -122,8 +122,12 @@ Results can be browsed with page numbers or infinite scroll. The default order i
 
 ## Reader
 
-- Single page, two-page spread for portrait pages, or continuous scroll.
-- Keyboard, mouse and touch navigation; fit modes, zoom and resize.
+- Single page, portrait spreads, or continuous scroll, with viewport, width, height and original-size fit modes.
+- The navigation bar has first, previous, next and last page buttons. Click the page indicator or press G, then Enter, to jump. File name, known dimensions and cached image size appear beside it.
+- Open the thumbnail overview with Q to jump to a page, use it as the cover or reset the cover. Options (O) apply immediately and save automatically, including reading direction, resize, preload count and auto-next interval. Zoom stays local to the session; Open original is in Options.
+- Right-to-left reading reverses paged arrows, tap zones, swipes and spread order. Continuous scrolling is unchanged.
+- Auto-next (N) shows a countdown, pauses while a panel is open or the tab is hidden, and continues into the next work when available. Previous/next work buttons and comma/period follow the library search and keep its filters when you return. Manual page turns stop at the ends.
+- Arrow keys or A/D turn pages; Space/Shift+Space move forward/back. Home/End or Shift+arrows jump to the ends. F toggles fullscreen, P single/spread, M direction, and Backspace returns to the library. The help panel (?) lists shortcuts and touch zones. Shortcuts ignore text entry; Escape closes panels or cancels a page jump.
 - Pages are sent as the original bytes when the browser can display them, so animated images keep their animation. When the browser can't decode AVIF, WebP or JXL, ARChika sends a PNG instead, and marks it as a still frame if the original was animated.
 - Fullscreen hides the reader controls automatically; tap the centre of the page or the controls button to show them again. Browser-level fullscreen (such as F11) is detected too. Where the Fullscreen API is unavailable or declined (for example on iPhone), the reader switches to an in-page fullscreen view instead: Back leaves it on the same page, and Back again returns to the library with your filters and scroll position.
 - ARChika doesn't keep a reading history.

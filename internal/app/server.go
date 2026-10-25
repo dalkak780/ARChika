@@ -18,6 +18,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", a.authenticated(false, a.logout))
 	mux.HandleFunc("PUT /api/preferences", a.authenticated(false, a.preferences))
 	mux.HandleFunc("GET /api/roots", a.authenticated(false, a.roots))
+	mux.HandleFunc("GET /api/works/{id}/neighbors", a.authenticated(false, a.neighbors))
+	mux.HandleFunc("GET /api/works/{id}/pages/{page}/thumbnail", a.authenticated(false, a.pageThumbnailHTTP))
 	mux.HandleFunc("GET /api/works", a.authenticated(false, a.works))
 	mux.HandleFunc("GET /api/works/{id}", a.authenticated(false, a.workDetail))
 	mux.HandleFunc("GET /api/works/{id}/pages/{page}", a.authenticated(false, a.pageHTTP))

@@ -178,3 +178,57 @@ export function VirtualContinuousPages({
     </div>
   );
 }
+
+export function VirtualPageOverview({
+  pages,
+  index,
+  renderPage,
+}: {
+  pages: Page[];
+  index: number;
+  renderPage: (page: Page, index: number) => ReactNode;
+}) {
+  "use no memo";
+  const container = useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = React.useState(2);
+  useLayoutEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() =>
+      setColumns(Math.max(2, Math.floor(element.clientWidth / 150))),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const virtual = useVirtualizer({
+    count: Math.ceil(pages.length / columns),
+    getScrollElement: () => container.current,
+    estimateSize: () => 260,
+    overscan: 1,
+  });
+  useLayoutEffect(() => {
+    virtual.scrollToIndex(Math.floor(index / columns), { align: "center" });
+  }, [columns, index, virtual]);
+  return (
+    <div ref={container} className="overview-scroll">
+      <div style={{ height: virtual.getTotalSize(), position: "relative" }}>
+        {virtual.getVirtualItems().map((row) => (
+          <div
+            key={row.key}
+            className="overview-row"
+            style={{
+              transform: `translateY(${row.start}px)`,
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            }}
+          >
+            {pages.slice(row.index * columns, (row.index + 1) * columns).map((page, offset) => (
+              <Fragment key={page.entry_id}>
+                {renderPage(page, row.index * columns + offset)}
+              </Fragment>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

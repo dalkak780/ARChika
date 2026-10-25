@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var errPageBusy = errors.New("page work queue is full")
+
 type PageValue struct {
 	Bytes []byte
 	MIME  string
@@ -176,7 +178,7 @@ func (c *PageCache) Load(ctx context.Context, key string, diskAdmission bool, fn
 	if flight == nil {
 		if len(c.flights) >= 128 {
 			c.mu.Unlock()
-			return PageValue{}, errors.New("page work queue is full")
+			return PageValue{}, errPageBusy
 		}
 		shared, cancel := context.WithCancel(c.ctx)
 		flight = &cacheFlight{done: make(chan struct{}), cancel: cancel}

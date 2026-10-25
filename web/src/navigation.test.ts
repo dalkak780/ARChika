@@ -58,7 +58,7 @@ test("keys ignore text entry and arrow-driven inputs but work from buttons, link
     assert.equal(ignoresKeys(target), false);
     assert.equal(keyAction({ key: "ArrowRight", target }), "next");
     assert.equal(keyAction({ key: "ArrowLeft", target }), "previous");
-    assert.equal(keyAction({ key: " ", target }), null);
+    assert.equal(keyAction({ key: " ", target }), "next");
     assert.equal(keyAction({ key: "Enter", target }), null);
   }
 });
@@ -90,4 +90,56 @@ test("taps use left, centre and right zones for every pointer type", () => {
   assert.equal(gestureAction(tap(900), at(900), { ...zones, zoom: 2 }), "chrome");
   assert.equal(gestureAction(tap(900), at(900), { ...zones, mode: "scroll" }), "chrome");
   assert.equal(gestureAction(tap(900), { ...at(900), time: 800 }, zones), null);
+});
+
+test("RTL reverses spread display without changing its next boundary", () => {
+  const pages = [portrait, portrait, landscape];
+  const shown = visiblePages(pages, 0, "spread", "rtl");
+  assert.deepEqual(shown, [1, 0]);
+  assert.equal(navigatePage(pages, 0, "next", "spread", shown), 2);
+  assert.deepEqual(visiblePages(pages, 2, "spread", "rtl"), [2]);
+});
+test("reader shortcuts and shifted navigation remain pure in both directions", () => {
+  for (const [key, expected] of Object.entries({
+    g: "goto",
+    F: "fullscreen",
+    p: "layout",
+    m: "direction",
+    n: "auto",
+    q: "overview",
+    o: "options",
+    "?": "help",
+    ",": "previousWork",
+    ".": "nextWork",
+    Backspace: "back",
+  })) {
+    assert.equal(keyAction({ key }), expected);
+    assert.equal(keyAction({ key }, "scroll", "rtl"), expected);
+    assert.equal(keyAction({ key, target: focus("input", "text") }), null);
+  }
+  assert.equal(keyAction({ key: "?", shiftKey: true }), "help");
+  assert.equal(keyAction({ key: "ArrowLeft" }, "paged", "rtl"), "next");
+  assert.equal(keyAction({ key: "d" }, "paged", "rtl"), "previous");
+  assert.equal(keyAction({ key: "a" }), "previous");
+  assert.equal(keyAction({ key: "ArrowRight", shiftKey: true }), "end");
+  assert.equal(keyAction({ key: "ArrowRight", shiftKey: true }, "paged", "rtl"), "home");
+  assert.equal(keyAction({ key: "ArrowLeft", shiftKey: true }, "paged", "rtl"), "end");
+  assert.equal(keyAction({ key: " ", shiftKey: true }), "previous");
+  assert.equal(keyAction({ key: " " }, "paged", "rtl"), "next");
+  assert.equal(keyAction({ key: "Home" }, "paged", "rtl"), "home");
+  assert.equal(keyAction({ key: "End" }, "paged", "rtl"), "end");
+  assert.equal(keyAction({ key: "a" }, "scroll", "rtl"), null);
+});
+test("RTL mirrors tap zones and swipes while continuous mode stays unchanged", () => {
+  const start = { x: 100, y: 100, time: 0, touches: 1 };
+  assert.equal(gestureAction(start, { ...start, time: 100 }, { direction: "rtl" }), "next");
+  assert.equal(gestureAction(start, { ...start, x: 220, time: 100 }, { direction: "rtl" }), "next");
+  assert.equal(
+    gestureAction(start, { ...start, time: 100 }, { mode: "scroll", direction: "rtl" }),
+    "chrome",
+  );
+  assert.equal(
+    gestureAction(start, { ...start, x: 220, time: 100 }, { mode: "scroll", direction: "rtl" }),
+    null,
+  );
 });
