@@ -329,8 +329,8 @@ func TestSevenzipAndRARConsumerSessions(t *testing.T) {
 func TestUpstreamSevenzipFixtureAndErrors(t *testing.T) {
 	root := openRoot(t, "testdata")
 	a := openAdapter(t, root, "upstream-lzma.7z", "7z", Limits{})
-	entries, caps := manifest(t, a)
-	if len(entries) != 0 || caps.Solid != "yes" {
+	entries, caps, err := a.List(context.Background())
+	if Code(err) != "unsupported_format" || len(entries) != 0 || caps.Solid != "yes" {
 		t.Fatalf("upstream fixture caps=%+v, pages=%d", caps, len(entries))
 	}
 	for _, name := range []string{"test_read_format_rar5_encrypted.rar"} {
@@ -339,7 +339,7 @@ func TestUpstreamSevenzipFixtureAndErrors(t *testing.T) {
 			_, _, err = a.List(context.Background())
 			a.Close()
 		}
-		if err != nil {
+		if Code(err) != "unsupported_format" {
 			t.Fatalf("encrypted non-image entries: %v", err)
 		}
 	}
@@ -347,7 +347,7 @@ func TestUpstreamSevenzipFixtureAndErrors(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "bad.zip"), []byte("not an archive"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := New(openRoot(t, dir), "bad.zip", "zip", Limits{})
+	_, err = New(openRoot(t, dir), "bad.zip", "zip", Limits{})
 	if Code(err) != "corrupt" {
 		t.Fatalf("corruption: %v (%s)", err, Code(err))
 	}
@@ -431,5 +431,20 @@ func BenchmarkNavigation(b *testing.B) {
 			b.ReportMetric(float64(reads)/float64(b.N), "file_reads/op")
 			b.ReportMetric(float64(readBytes)/float64(b.N), "file_bytes/op")
 		})
+	}
+}
+
+func TestDirectoryWithoutImagePages(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "private.BMP"), []byte("bitmap"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "child.png"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := openAdapter(t, openRoot(t, dir), ".", "directory", Limits{})
+	_, _, err := a.List(context.Background())
+	if Code(err) != "unsupported_format" || Message(err) != "No supported image pages (found: 1 .bmp)" {
+		t.Fatalf("empty gallery: %v", err)
 	}
 }

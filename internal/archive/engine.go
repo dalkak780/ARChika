@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"math"
@@ -286,6 +287,7 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 		e.caps.Skipped[reason]++
 	}
 	count := 0
+	found := map[string]int{}
 	add := func(name string, size int64, dir, regular, encrypted, unknown bool, locator int) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -294,7 +296,20 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 		if count > e.limits.MaxEntries {
 			return limited("archive entry count")
 		}
-		if dir || !regular || mediaType(path.Clean(strings.ReplaceAll(name, "\\", "/"))) == "" {
+		if dir {
+			return nil
+		}
+		clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
+		if mediaType(clean) == "" {
+			ext := strings.ToLower(path.Ext(clean))
+			if ext == "" {
+				ext = "(none)"
+			}
+			found[ext]++
+			return nil
+		}
+		if !regular {
+			skip("not_regular")
 			return nil
 		}
 		reason := ""
@@ -370,7 +385,7 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 				batch, err = f.ReadDir(128)
 				for _, d := range batch {
 					if d.IsDir() || mediaType(path.Clean(strings.ReplaceAll(d.Name(), "\\", "/"))) == "" {
-						if err = add(d.Name(), 0, true, false, false, false, 0); err != nil {
+						if err = add(d.Name(), 0, d.IsDir(), false, false, false, 0); err != nil {
 							break
 						}
 						continue
@@ -401,8 +416,45 @@ func (e *engine) List(ctx context.Context) ([]Entry, Capabilities, error) {
 	if err != nil {
 		return nil, e.caps, err
 	}
-	if len(entries) == 0 && e.zipOpenError != nil {
-		return nil, e.caps, e.zipOpenError
+	if len(entries) == 0 {
+		if len(e.caps.Skipped) > 0 {
+			total, other := 0, 0
+			reasons := []string{}
+			for reason, count := range e.caps.Skipped {
+				total += count
+				if reason != "encrypted" {
+					other = max(other, count)
+				}
+				reasons = append(reasons, fmt.Sprintf("%s: %d", reason, count))
+			}
+			if e.caps.Skipped["encrypted"] > other {
+				return nil, e.caps, failure("encrypted_or_password_required", "all image pages are encrypted")
+			}
+			sort.Strings(reasons)
+			return nil, e.caps, failure("unsupported_format", fmt.Sprintf("all %d image pages were skipped (%s)", total, strings.Join(reasons, ", ")))
+		}
+		if e.zipOpenError != nil {
+			return nil, e.caps, e.zipOpenError
+		}
+		exts := []string{}
+		for ext := range found {
+			exts = append(exts, ext)
+		}
+		sort.Slice(exts, func(i, j int) bool {
+			if found[exts[i]] != found[exts[j]] {
+				return found[exts[i]] > found[exts[j]]
+			}
+			return exts[i] < exts[j]
+		})
+		message := "No supported image pages"
+		if len(exts) > 0 {
+			parts := []string{}
+			for _, ext := range exts[:min(5, len(exts))] {
+				parts = append(parts, fmt.Sprintf("%d %s", found[ext], ext))
+			}
+			message += " (found: " + strings.Join(parts, ", ") + ")"
+		}
+		return nil, e.caps, failure("unsupported_format", message)
 	}
 	sort.Slice(entries, func(i, j int) bool { return pageLess(entries[i].Path, entries[j].Path) })
 	for i := range entries {
@@ -662,9 +714,9 @@ func normalize(name string) (string, error) {
 	if len(name) > 4096 {
 		return "", limited("entry path length")
 	}
-	name = strings.ReplaceAll(name, "\\", "/")
+	name = strings.TrimLeft(strings.ReplaceAll(name, "\\", "/"), "/")
 	driveAbsolute := len(name) >= 3 && (name[0] >= 'A' && name[0] <= 'Z' || name[0] >= 'a' && name[0] <= 'z') && name[1:3] == ":/"
-	if name == "" || strings.HasPrefix(name, "/") || driveAbsolute || strings.IndexByte(name, 0) >= 0 {
+	if name == "" || driveAbsolute || strings.IndexByte(name, 0) >= 0 {
 		return "", failure("corrupt", "unsafe entry path")
 	}
 	for _, part := range strings.Split(name, "/") {
@@ -680,7 +732,7 @@ func normalize(name string) (string, error) {
 }
 func mediaType(name string) string {
 	switch strings.ToLower(path.Ext(name)) {
-	case ".jpg", ".jpeg":
+	case ".jpg", ".jpeg", ".jfif", ".jpe":
 		return "image/jpeg"
 	case ".png":
 		return "image/png"

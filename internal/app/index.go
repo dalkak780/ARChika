@@ -144,10 +144,6 @@ func (a *App) buildIndex(ctx context.Context, al Alias) error {
 		_, _ = a.DB.ExecContext(ctx, "UPDATE works SET index_status='error',error_code=?,error_message=?,error_at=? WHERE id=? AND version=?", decodeErrorCode(e), indexError(e), now(), al.WorkID, al.Version)
 		return e
 	}
-	if len(entries) == 0 {
-		_, _ = a.DB.ExecContext(ctx, "UPDATE works SET index_status='error',error_code='unsupported_format',error_message='No supported image pages',error_at=? WHERE id=? AND version=?", now(), al.WorkID, al.Version)
-		return errors.New("no supported image pages")
-	}
 	// All enumeration results remain private until both revision checks succeed.
 	verified, verifyErr := a.checkSource(ctx, al)
 	if verifyErr != nil {

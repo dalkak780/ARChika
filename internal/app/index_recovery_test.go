@@ -24,7 +24,7 @@ func TestIndexMigrationAndInteractiveRetry(t *testing.T) {
 	a, roots := testApp(t)
 	ctx := context.Background()
 	works := map[string]string{}
-	for _, code := range []string{"corrupt", "encrypted_or_password_required", "unknown", "io_error", "unsupported_format", "ready"} {
+	for _, code := range []string{"corrupt", "encrypted_or_password_required", "unknown", "io_error", "unsupported_format", "permission_denied", "ready"} {
 		name := code + ".cbz"
 		writeZIP(t, filepath.Join(roots[0].Path, name))
 		al := readyWork(t, a, registerWork(t, a, roots[0], name))
@@ -52,7 +52,7 @@ func TestIndexMigrationAndInteractiveRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch code {
-		case "corrupt", "encrypted_or_password_required", "unknown":
+		case "corrupt", "encrypted_or_password_required", "unknown", "unsupported_format":
 			if al.IndexStatus != "stale" || al.ErrorCode != "" || al.ErrorMessage != "" {
 				t.Fatalf("upgrade: %+v", al)
 			}
@@ -65,7 +65,7 @@ func TestIndexMigrationAndInteractiveRetry(t *testing.T) {
 				t.Fatalf("unrelated error changed: %+v", al)
 			}
 		}
-		if code == "unsupported_format" {
+		if code == "permission_denied" {
 			if err = a.ensureIndex(ctx, al); !errors.Is(err, errIndexFailed) {
 				t.Fatalf("sticky error: %v", err)
 			}
@@ -101,15 +101,31 @@ func TestIndexMigrationAndInteractiveRetry(t *testing.T) {
 func TestIndexFailureMessageThroughHelperAndAPI(t *testing.T) {
 	a, roots := testApp(t)
 	ctx := context.Background()
-	for _, tc := range []struct{ name, message, code string }{
-		{"garbage.cbz", "invalid ZIP archive", "corrupt"},
-		{"empty.cbz", "No supported image pages", "unsupported_format"},
+	for _, tc := range []struct {
+		name, message, code string
+		names               []string
+		encrypted           int
+	}{
+		{"garbage.cbz", "invalid ZIP archive", "corrupt", nil, 0},
+		{"empty.cbz", "No supported image pages", "unsupported_format", nil, 0},
+		{"unsafe.cbz", "all 2 image pages were skipped (unsafe_path: 2)", "unsupported_format", []string{"../private.png", "../secret.png"}, 0},
+		{"encrypted.cbz", "all image pages are encrypted", "encrypted_or_password_required", []string{"private.png", "secret.png", "../other.png"}, 2},
+		{"other.cbz", "No supported image pages (found: 2 .bmp, 1 .txt)", "unsupported_format", []string{"private.BMP", "secret.bmp", "notes.txt"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := []byte("not a zip archive")
-			if tc.name == "empty.cbz" {
+			if tc.name != "garbage.cbz" {
 				var buf bytes.Buffer
 				w := zip.NewWriter(&buf)
+				for i, name := range tc.names {
+					h := zip.FileHeader{Name: name}
+					if i < tc.encrypted {
+						h.Flags = 1
+					}
+					if _, err := w.CreateRaw(&h); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if err := w.Close(); err != nil {
 					t.Fatal(err)
 				}

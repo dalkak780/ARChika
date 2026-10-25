@@ -122,8 +122,8 @@ func TestZIPSkipsBadEntries(t *testing.T) {
 	root := saveZIP(t, data.Bytes())
 	a := openAdapter(t, root, "pages.zip", "zip", Limits{MaxEntryBytes: 8})
 	entries, caps := manifest(t, a)
-	want := map[string]int{"encrypted": 1, "unsafe_path": 4, "duplicate": 1, "too_large": 2}
-	if len(entries) != 2 || !reflect.DeepEqual(caps.Skipped, want) {
+	want := map[string]int{"encrypted": 1, "unsafe_path": 3, "duplicate": 1, "too_large": 2}
+	if len(entries) != 3 || !reflect.DeepEqual(caps.Skipped, want) {
 		t.Fatalf("entries=%+v caps=%+v", entries, caps)
 	}
 	_, again := manifest(t, a)
@@ -249,9 +249,93 @@ func TestSalvagedZIPChecksumAndLimits(t *testing.T) {
 func TestSevenAndRARSkipOversizedPages(t *testing.T) {
 	for _, name := range []string{"pages-solid-on.7z", "pages-rar5-solid.rar"} {
 		a := openAdapter(t, openRoot(t, "testdata"), name, filepath.Ext(name)[1:], Limits{MaxEntryBytes: 1})
-		entries, caps := manifest(t, a)
-		if len(entries) != 0 || caps.Skipped["too_large"] == 0 {
+		entries, caps, err := a.List(context.Background())
+		if Code(err) != "unsupported_format" || len(entries) != 0 || caps.Skipped["too_large"] == 0 {
 			t.Fatalf("entries=%+v caps=%+v", entries, caps)
+		}
+	}
+}
+
+func TestZIPLeadingSlashes(t *testing.T) {
+	t.Setenv("GODEBUG", "zipinsecurepath=0")
+	dir := t.TempDir()
+	payload := []byte("original page bytes")
+	name := makeZIP(t, dir, []string{"/001.png", "/002.png", "/003.png", "/004.png", "../x.png"}, payload)
+	a := openAdapter(t, openRoot(t, dir), name, "zip", Limits{})
+	entries, caps := manifest(t, a)
+	if len(entries) != 4 || caps.Skipped["unsafe_path"] != 1 {
+		t.Fatalf("entries=%+v caps=%+v", entries, caps)
+	}
+	for i, entry := range entries {
+		if entry.Path != fmt.Sprintf("%03d.png", i+1) || !bytes.Equal(pageBytes(t, a, entry), payload) {
+			t.Fatalf("page: %+v", entry)
+		}
+	}
+}
+
+func TestZIPEmptyListingReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		names         []string
+		encrypted     int
+		code, message string
+	}{
+		{"unsafe", []string{"../1.png", "../2.png", "../3.png", "../4.png"}, 0, "unsupported_format", "all 4 image pages were skipped (unsafe_path: 4)"},
+		{"encrypted", []string{"1.png", "2.png"}, 2, "encrypted_or_password_required", "all image pages are encrypted"},
+		{"mostly encrypted", []string{"1.png", "2.png", "../3.png"}, 2, "encrypted_or_password_required", "all image pages are encrypted"},
+		{"tied", []string{"1.png", "../2.png"}, 1, "unsupported_format", "all 2 image pages were skipped (encrypted: 1, unsafe_path: 1)"},
+		{"mostly unsafe", []string{"1.png", "../2.png", "../3.png"}, 1, "unsupported_format", "all 3 image pages were skipped (encrypted: 1, unsafe_path: 2)"},
+		{"extensions", []string{"secret/a.BMP", "b.bmp", "private.txt", "README", "a.csv", "a.pdf", "a.tif", "directory/"}, 0, "unsupported_format", "No supported image pages (found: 2 .bmp, 1 (none), 1 .csv, 1 .pdf, 1 .tif)"},
+		{"empty", nil, 0, "unsupported_format", "No supported image pages"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var data bytes.Buffer
+			w := zip.NewWriter(&data)
+			for i, name := range tc.names {
+				h := zip.FileHeader{Name: name}
+				if i < tc.encrypted {
+					h.Flags = 1
+				}
+				if _, err := w.CreateRaw(&h); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			a := openAdapter(t, saveZIP(t, data.Bytes()), "pages.zip", "zip", Limits{})
+			entries, _, err := a.List(context.Background())
+			if len(entries) != 0 || Code(err) != tc.code || Message(err) != tc.message {
+				t.Fatalf("entries=%+v error=%v message=%q", entries, err, Message(err))
+			}
+		})
+	}
+}
+
+func TestJPEGExtensions(t *testing.T) {
+	dir := t.TempDir()
+	name := makeZIP(t, dir, []string{"1.jfif", "2.JPE"}, []byte("jpeg bytes"))
+	a := openAdapter(t, openRoot(t, dir), name, "zip", Limits{})
+	entries, _ := manifest(t, a)
+	if len(entries) != 2 {
+		t.Fatalf("pages=%d", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.MIME != "image/jpeg" || string(pageBytes(t, a, entry)) != "jpeg bytes" {
+			t.Fatalf("page: %+v", entry)
+		}
+	}
+}
+
+func TestNormalizeLeadingSlashes(t *testing.T) {
+	for _, name := range []string{"///001.png", `\\001.png`} {
+		if normal, err := normalize(name); err != nil || normal != "001.png" {
+			t.Fatalf("normalize: %q %v", normal, err)
+		}
+	}
+	for _, name := range []string{"///", "/./", "/../x.png", "/nul\x00.png"} {
+		if _, err := normalize(name); err == nil {
+			t.Fatal("unsafe name accepted")
 		}
 	}
 }

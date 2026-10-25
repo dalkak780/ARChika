@@ -118,7 +118,7 @@ func TestMigrationTwoToThree(t *testing.T) {
 	if err = db.QueryRow("SELECT must_change_password FROM users WHERE id='existing'").Scan(&mustChange); err != nil {
 		t.Fatal(err)
 	}
-	if version != 4 || mustChange {
+	if version != 5 || mustChange {
 		t.Fatalf("version=%d mustChange=%v", version, mustChange)
 	}
 }

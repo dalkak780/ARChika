@@ -28,7 +28,7 @@ func TestListExistingFixtures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := openAdapter(t, root, name, filepath.Ext(name)[1:], Limits{})
 			entries, _, err := a.List(context.Background())
-			if err != nil {
+			if err != nil && !(len(entries) == 0 && Code(err) == "unsupported_format") {
 				t.Fatal(err)
 			}
 			h := sha256.New()
