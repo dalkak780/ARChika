@@ -1,0 +1,64 @@
+Archive fixtures (read-only runtime fixtures; never source-library archives)
+
+pages-solid-on.7z and pages-solid-off.7z
+  Authored for ARChika using 7-Zip 7zz, LZMA2 (-mx=1), -ms=on / -ms=off.
+  Sixteen original 1x1 RGB PNGs named 1.png through 16.png. No external payloads.
+  No 7-Zip executable/library is shipped or required by the application/tests.
+
+upstream-lzma.7z
+  Unmodified copy of github.com/bodgit/sevenzip v1.6.4/testdata/lzma.7z.
+  Source: https://github.com/bodgit/sevenzip/tree/v1.6.4/testdata
+  Copyright (c) 2020 Matt Dainty; BSD-3-Clause, full notice in sevenzip-LICENSE.
+  Ten non-image files; used to verify genuine upstream solid-stream capability detection.
+
+test_read_format_rar5_multiple_files_solid.rar
+  Decoded, otherwise unmodified upstream uuencoded fixture:
+  https://github.com/libarchive/libarchive/blob/master/libarchive/test/test_read_format_rar5_multiple_files_solid.rar.uu
+
+test_read_format_rar5_multiple_files.rar
+  Decoded, otherwise unmodified upstream uuencoded fixture:
+  https://github.com/libarchive/libarchive/blob/master/libarchive/test/test_read_format_rar5_multiple_files.rar.uu
+
+test_read_format_rar5_encrypted.rar
+  Decoded, otherwise unmodified upstream uuencoded fixture:
+  https://github.com/libarchive/libarchive/blob/master/libarchive/test/test_read_format_rar5_encrypted.rar.uu
+
+pages-rar5-solid.rar and pages-rar5-nonsolid.rar
+  Adapted from the corresponding multiple_files fixtures above: only the four
+  testN.bin filenames were renamed testN.png and the header CRCs recalculated.
+  Original binary-pattern payloads are unchanged and are NOT PNG images; these
+  fixtures exercise container/page-routing behavior, not image decoding.
+
+Libarchive RAR5 fixture tests: Copyright (c) 2018 Grzegorz Antoniak.
+  Source and BSD-2-Clause redistribution terms:
+  https://github.com/libarchive/libarchive/blob/master/libarchive/test/test_read_format_rar5.c
+  Full retained copyright and terms are in libarchive-LICENSE.
+
+test_read_format_rar.rar and pages-rar4.rar
+  Upstream fixture and adapted copy (test.txt renamed test.png; matching link
+  target renamed and header CRCs recalculated; text payload remains unchanged).
+  https://github.com/libarchive/libarchive/blob/master/libarchive/test/test_read_format_rar.rar.uu
+  Source and redistribution terms:
+  https://github.com/libarchive/libarchive/blob/master/libarchive/test/test_read_format_rar.c
+  Full retained copyright and terms are in libarchive-rar4-LICENSE.
+
+Runtime Go decoder source licensing:
+  github.com/bodgit/sevenzip v1.6.4: BSD-3-Clause (sevenzip-LICENSE).
+  github.com/nwaples/rardecode/v2 v2.4.5: BSD-2-Clause (rardecode-LICENSE).
+  Transitive dependencies retain their own module license notices. Distributors
+  must include applicable decoder/transitive notices; fixture notices above do
+  not replace the complete application dependency notice inventory.
+
+ real-pages-rar5-solid.rar, real-pages-rar5-nonsolid.rar, real-pages-rar5-encrypted.rar
+   Generated solely for ARChika validation from sixteen original solid-colour PNGs
+   (10x15 portrait; page 4 is 15x10 landscape), including nested/한국어0016.png.
+   Created with the official RAR 7.23 macOS ARM64 evaluation tool, 4 MiB dictionary,
+   -s / -s- / -hpfixture-password. The tool itself is NOT distributed or required.
+   Tool source: https://www.rarlab.com/rar/rarmacos-arm-723.tar.gz
+   Downloaded package SHA256: 68b393c000758d477fde43c955ff7542f12f76f3f5e87cdda923152fc791bd4d
+   These fixtures contain genuine PNG bytes, unlike the renamed upstream error fixtures.
+
+ real-pages-rar4-store.rar
+   Sixteen original PNGs in a minimal uncompressed RAR4 container, with standard
+   file/data CRCs. Fixture bytes were authored for validation and independently
+   accepted by 7-Zip 26.04. No archive-writing implementation exists in the product.

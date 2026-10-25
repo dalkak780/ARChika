@@ -1,0 +1,31 @@
+listen: 0.0.0.0:8080
+data_dir: /data
+cache_dir: /cache
+allowed_paths:
+  - /library
+roots:
+  - key: main
+    name: Library
+    path: /library
+    watch: false
+    auto_crawl: false
+    quiet_seconds: 3
+memory_bytes: 67108864
+disk_bytes: 1073741824
+page_bytes: 67108864
+workers: 2
+max_pixels: 64000000
+scan_per_second: 200
+quiet_seconds: 3
+session_hours: 168
+secure_cookies: false
+pause_jobs: false
+password:
+  memory_kib: 65536
+  iterations: 3
+  parallelism: 2
+  max_memory_kib: 262144
+dns_mode: doh
+doh_url: https://cloudflare-dns.com/dns-query
+proxy_url: ""
+plugin_directory: /plugins

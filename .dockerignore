@@ -1,0 +1,8 @@
+.git
+.smoke
+bin
+data
+node_modules
+web/node_modules
+web/dist
+verification

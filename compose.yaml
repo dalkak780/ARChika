@@ -1,0 +1,51 @@
+services:
+  archika:
+    build: .
+    image: archika:local
+    user: "${PUID:?Set a non-root PUID}:${PGID:?Set PGID}"
+    init: true
+    read_only: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    environment:
+      ARCHIKA_CONFIG: /config/archika.yaml
+      ARCHIKA_MASTER_KEY: "${ARCHIKA_MASTER_KEY:-}"
+      GOMAXPROCS: "2"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 2g
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - type: bind
+        source: ./archika.yaml
+        target: /config/archika.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LIBRARY_PATH:?Set the library directory}
+        target: /library
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DATA_PATH:?Provision a writable data directory}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CACHE_PATH:?Provision a separate writable cache directory}
+        target: /cache
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./plugins
+        target: /plugins
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,0 +1,13 @@
+/bin/
+/data/
+/.smoke/
+/web/node_modules/
+/web/dist/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+/archika.yaml
+/.env
+/plugins/
+/SPEC.md
+/verification/
