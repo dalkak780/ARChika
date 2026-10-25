@@ -10,6 +10,9 @@
   --accent: #a3e7cf;
   --accent-ink: #112c23;
   --error: #ff9d9d;
+  /* Translucent layers over page images; derived so the light scheme follows. */
+  --overlay: color-mix(in srgb, var(--surface) 92%, transparent);
+  --overlay-strong: color-mix(in srgb, var(--surface) 96%, transparent);
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -61,7 +64,7 @@ button.primary:hover:not(:disabled) {
 }
 button.danger {
   color: var(--error);
-  border-color: #87484d;
+  border-color: color-mix(in srgb, var(--error) 55%, transparent);
 }
 a {
   color: var(--accent);
@@ -345,9 +348,9 @@ summary .muted {
   position: absolute;
   left: 0.5rem;
   bottom: 0.5rem;
-  background: #10151ee8;
-  border: 1px solid #59616d;
-  color: #d4dae2;
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  color: var(--text);
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -356,8 +359,8 @@ summary .muted {
 }
 .status.ready,
 .status.indexed {
-  color: #a3e7cf;
-  border-color: #36715c;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .work-card h3 {
   font-size: 0.88rem;
@@ -595,7 +598,7 @@ hr {
   position: relative;
 }
 .reader-toolbar {
-  background: #141920f5;
+  background: var(--overlay-strong);
   border-bottom: 1px solid var(--line);
   padding: 0.65rem 1rem 0.1rem;
   z-index: 5;
@@ -637,7 +640,7 @@ hr {
   align-items: center;
   gap: 0.8rem;
   padding: 0.65rem 1rem max(0.65rem, env(safe-area-inset-bottom));
-  background: #141920f5;
+  background: var(--overlay-strong);
   border-top: 1px solid var(--line);
   z-index: 5;
 }
@@ -708,7 +711,7 @@ hr {
   right: 0.4rem;
   bottom: 0.4rem;
   padding: 0.4rem;
-  background: #161b22e8;
+  background: var(--overlay);
   font-size: 0.7rem;
   border-radius: 4px;
 }
@@ -759,7 +762,8 @@ hr {
   position: absolute;
   bottom: 1.4rem;
   right: 1rem;
-  background: #161b22cc;
+  background: var(--overlay);
+  color: var(--text);
   padding: 0.1rem 0.5rem;
   border-radius: 4px;
   font-size: 0.7rem;
@@ -772,7 +776,9 @@ hr {
   top: max(0.6rem, env(safe-area-inset-top));
   z-index: 12;
   font-size: 0.75rem;
-  background: #1c2430ed;
+  background: var(--overlay-strong);
+  color: var(--text);
+  border-color: var(--line);
   opacity: 0.85;
 }
 .reader.immersive .reader-toolbar {
@@ -804,7 +810,7 @@ hr {
   bottom: 1rem;
   width: min(700px, calc(100% - 2rem));
   overflow: auto;
-  box-shadow: 0 20px 100px #000a;
+  box-shadow: 0 20px 100px color-mix(in srgb, var(--bg) 60%, #000 40%);
 }
 .metadata-panel > button:first-child {
   position: sticky;
@@ -957,7 +963,7 @@ hr {
 
 .reader-image,
 .reader-backdrop {
-  background: #161b22;
+  background: var(--surface-raised);
 }
 .reader-backdrop {
   position: relative;
@@ -976,8 +982,8 @@ hr {
   left: calc(50% - 1rem);
   width: 2rem;
   height: 2rem;
-  border: 3px solid #ffffff40;
-  border-top-color: #fff;
+  border: 3px solid color-mix(in srgb, var(--text) 25%, transparent);
+  border-top-color: var(--text);
   border-radius: 50%;
   animation: reader-spin 0.9s linear infinite;
 }
