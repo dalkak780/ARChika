@@ -1,5 +1,7 @@
 # ARChika
 
+[![CI](https://github.com/dalkak780/ARChika/actions/workflows/ci.yml/badge.svg)](https://github.com/dalkak780/ARChika/actions/workflows/ci.yml) [![Docker](https://github.com/dalkak780/ARChika/actions/workflows/docker.yml/badge.svg)](https://github.com/dalkak780/ARChika/actions/workflows/docker.yml)
+
 A lightweight, self-hosted archive gallery and reader. One Go `net/http` process serves an embedded React/Vite SPA; production does not need Node.js, Redis, Perl, or an external database.
 
 Implementation follows the latest decisions in [SPEC.md](SPEC.md), not superseded discussion paragraphs. This is a fresh SQLite catalog, not a LANraragi database/API migration.
@@ -44,6 +46,8 @@ printf '%s\n' "$ARCHIKA_INITIAL_PASSWORD" | docker compose run --rm -T archika a
 unset ARCHIKA_INITIAL_PASSWORD
 docker compose up -d
 ```
+
+Prebuilt multi-architecture images (`linux/amd64`, `linux/arm64`) are published to `ghcr.io/dalkak780/archika`: `main` tracks the default branch, `latest` and `X.Y.Z` track release tags. To use one instead of building locally, set `image: ghcr.io/dalkak780/archika:latest` in `compose.yaml`, remove `build: .`, and replace `docker compose build` with `docker compose pull`.
 
 Compose binds the HTTP port to loopback, drops capabilities, uses a read-only container filesystem, mounts originals and plugin executables read-only, and supplies separate persistent data, temporary page-cache and bounded `/tmp` storage. Configure the reverse proxy or intentionally adjust the port binding for a trusted network. Add additional read-only mounts and matching `allowed_paths` entries for additional roots.
 
