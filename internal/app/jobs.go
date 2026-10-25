@@ -101,9 +101,14 @@ func (a *App) jobLoop() {
 				case <-monitorDone:
 					return
 				case <-ticker.C:
-					if a.jobAlive(ctx, j.ID) != nil {
-						cancel()
-						return
+					if aliveErr := a.jobAlive(ctx, j.ID); aliveErr != nil {
+						if errors.Is(aliveErr, errJobStopped) || errors.Is(aliveErr, sql.ErrNoRows) {
+							cancel()
+							return
+						}
+						if ctx.Err() == nil {
+							a.Log.Warn("background job monitor failed", "job", j.ID, "error_type", fmt.Sprintf("%T", aliveErr))
+						}
 					}
 				}
 			}
@@ -116,7 +121,10 @@ func (a *App) jobLoop() {
 		close(monitorDone)
 		cancel()
 		a.signal()
-		if errors.Is(e, errJobStopped) || errors.Is(e, context.Canceled) || errors.Is(e, errJobDeferred) {
+		if a.ctx.Err() != nil {
+			return
+		}
+		if errors.Is(e, errJobStopped) || errors.Is(e, errJobDeferred) {
 			continue
 		}
 		state := "completed"

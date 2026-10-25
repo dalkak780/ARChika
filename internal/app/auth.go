@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -196,16 +197,36 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip, e := netip.ParseAddr(host); e == nil {
+		ip = ip.Unmap()
+		if ip.Is6() {
+			host = netip.PrefixFrom(ip, 64).Masked().String()
+		} else {
+			host = ip.String()
+		}
+	}
 	a.authMu.Lock()
-	v := a.loginAttempts[host]
-	if time.Since(v.At) > time.Minute {
-		v = loginAttempt{At: time.Now()}
+	at := time.Now()
+	v, tracked := a.loginAttempts[host]
+	if at.Sub(v.At) > time.Minute {
+		v = loginAttempt{At: at}
 	}
 	v.Count++
-	if len(a.loginAttempts) > 10000 {
-		a.authMu.Unlock()
-		apiError(w, 429, "rate_limited", "Try again later")
-		return
+	for !tracked && len(a.loginAttempts) >= 10000 {
+		var oldestHost string
+		var oldestAt time.Time
+		for k, attempt := range a.loginAttempts {
+			if at.Sub(attempt.At) > time.Minute {
+				delete(a.loginAttempts, k)
+				continue
+			}
+			if oldestAt.IsZero() || attempt.At.Before(oldestAt) {
+				oldestHost, oldestAt = k, attempt.At
+			}
+		}
+		if len(a.loginAttempts) >= 10000 {
+			delete(a.loginAttempts, oldestHost)
+		}
 	}
 	a.loginAttempts[host] = v
 	a.authMu.Unlock()

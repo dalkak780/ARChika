@@ -67,7 +67,21 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 			return e
 		}
 	}
-	_, e = a.DB.ExecContext(ctx, "INSERT INTO scan_dirs(job_id,path) VALUES(?,?) ON CONFLICT DO NOTHING", j.ID, start)
+	tx, e := a.DB.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	res, e := tx.Exec("INSERT INTO scan_dirs(job_id,path) VALUES(?,?) ON CONFLICT DO NOTHING", j.ID, start)
+	if e == nil && start == "." {
+		if n, _ := res.RowsAffected(); n > 0 {
+			// Mark sweep candidates only at the first checkpoint; observations replace this marker.
+			_, e = tx.Exec("UPDATE aliases SET seen=? WHERE root_id=?", "unseen:"+j.ID, root.ID)
+		}
+	}
+	if e == nil {
+		e = tx.Commit()
+	}
 	if e != nil {
 		return e
 	}
@@ -86,12 +100,16 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 			return e
 		}
 		if listed != "listed" {
-			if e = a.listScanDirectory(ctx, j, root, r, dir); e != nil {
+			skipped, err := a.listScanDirectory(ctx, j, root, r, dir)
+			if e = err; e != nil {
 				if errors.Is(e, context.Canceled) || errors.Is(e, errJobStopped) {
 					return e
 				}
 				_, _ = a.DB.ExecContext(ctx, "UPDATE jobs SET failed=failed+1,error='Some directories could not be read',updated=? WHERE id=?", now(), j.ID)
 				_, _ = a.DB.ExecContext(ctx, "UPDATE scan_dirs SET done=2 WHERE job_id=? AND path=?", j.ID, dir)
+				continue
+			}
+			if skipped {
 				continue
 			}
 		}
@@ -188,13 +206,13 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 		_, _ = a.DB.ExecContext(ctx, "UPDATE roots SET warning='Reconciliation incomplete; unseen records retained' WHERE id=?", root.ID)
 		return errors.New("scan incomplete; unreadable directories require explicit retry")
 	}
-	tx, e := a.DB.BeginTx(ctx, nil)
+	tx, e = a.DB.BeginTx(ctx, nil)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
 	if start == "." {
-		_, e = tx.Exec("UPDATE aliases SET status='offline' WHERE root_id=? AND seen!=?", root.ID, "scan:"+j.ID)
+		_, e = tx.Exec("UPDATE aliases SET status='offline' WHERE root_id=? AND seen=?", root.ID, "unseen:"+j.ID)
 	}
 	if e == nil && payload.Target != "" {
 		_, e = tx.Exec("UPDATE roots SET path=?,pending_path='',warning='',status='online',checked_at=? WHERE id=?", payload.Target, now(), root.ID)
@@ -210,19 +228,19 @@ func (a *App) scanJob(ctx context.Context, j Job) error {
 	a.notifyWatch()
 	return e
 }
-func (a *App) listScanDirectory(ctx context.Context, j Job, root Root, r *os.Root, dir string) error {
+func (a *App) listScanDirectory(ctx context.Context, j Job, root Root, r *os.Root, dir string) (bool, error) {
 	st, e := r.Stat(dir)
 	if e != nil {
-		return e
+		return false, e
 	}
 	key := physicalKey(st, root.Path, dir)
 	if key == "" {
 		canonical, err := filepath.EvalSymlinks(filepath.Join(root.Path, filepath.FromSlash(dir)))
 		if err != nil {
-			return err
+			return false, err
 		}
 		if canonical != root.Path && !within(root.Path, canonical) {
-			return os.ErrPermission
+			return false, os.ErrPermission
 		}
 		key = "canonical:" + canonical
 	}
@@ -230,28 +248,28 @@ func (a *App) listScanDirectory(ctx context.Context, j Job, root Root, r *os.Roo
 	err := a.DB.QueryRowContext(ctx, "SELECT path FROM scan_seen WHERE job_id=? AND physical_key=?", j.ID, key).Scan(&previous)
 	if err == nil && previous != dir {
 		_, e = a.DB.ExecContext(ctx, "UPDATE scan_dirs SET done=1,after_name='listed' WHERE job_id=? AND path=?", j.ID, dir)
-		return e
+		return true, e
 	}
 	_, e = a.DB.ExecContext(ctx, "INSERT INTO scan_seen(job_id,physical_key,path) VALUES(?,?,?) ON CONFLICT DO NOTHING", j.ID, key, dir)
 	if e != nil {
-		return e
+		return false, e
 	}
 	// os.Root rejects escapes atomically, including symlink swaps, on supported Go platforms.
 	f, e := r.Open(dir)
 	if e != nil {
-		return e
+		return false, e
 	}
 	defer f.Close()
 	_, _ = a.DB.ExecContext(ctx, "INSERT INTO watch_dirs(root_id,path) VALUES(?,?) ON CONFLICT DO NOTHING", root.ID, dir)
 	for {
 		if e = a.jobAlive(ctx, j.ID); e != nil {
-			return e
+			return false, e
 		}
 		entries, re := f.ReadDir(128)
 		if len(entries) > 0 {
 			tx, e := a.DB.BeginTx(ctx, nil)
 			if e != nil {
-				return e
+				return false, e
 			}
 			for _, entry := range entries {
 				rel := path.Join(dir, entry.Name())
@@ -275,18 +293,18 @@ func (a *App) listScanDirectory(ctx context.Context, j Job, root Root, r *os.Roo
 				tx.Rollback()
 			}
 			if e != nil {
-				return e
+				return false, e
 			}
 		}
 		if re == io.EOF {
 			break
 		}
 		if re != nil {
-			return re
+			return false, re
 		}
 	}
 	_, e = a.DB.ExecContext(ctx, "UPDATE scan_dirs SET after_name='listed' WHERE job_id=? AND path=?", j.ID, dir)
-	return e
+	return false, e
 }
 func escapeLike(s string) string {
 	return strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(s)
@@ -443,7 +461,7 @@ func (a *App) observe(ctx context.Context, root Root, rel, kind string, st os.Fi
 			return "", e
 		}
 	}
-	_, e = tx.Exec("INSERT INTO aliases(work_id,root_id,path,original_name,title,title_sort,parent,physical_key,size,mtime,seen,filename_tags,parser_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,path) DO UPDATE SET work_id=excluded.work_id,original_name=excluded.original_name,title=excluded.title,title_sort=excluded.title_sort,parent=excluded.parent,status='online',physical_key=excluded.physical_key,size=excluded.size,mtime=excluded.mtime,seen=CASE WHEN excluded.seen!='' THEN excluded.seen ELSE aliases.seen END,filename_tags=excluded.filename_tags,parser_version=excluded.parser_version", existingID, root.ID, rel, original, title, titleSort, path.Dir(rel), nullString(physical), size, mtime, scanMarker, tagJSON, parser)
+	_, e = tx.Exec("INSERT INTO aliases(work_id,root_id,path,original_name,title,title_sort,parent,physical_key,size,mtime,seen,filename_tags,parser_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,path) DO UPDATE SET work_id=excluded.work_id,original_name=excluded.original_name,title=excluded.title,title_sort=excluded.title_sort,parent=excluded.parent,status='online',physical_key=excluded.physical_key,size=excluded.size,mtime=excluded.mtime,seen=excluded.seen,filename_tags=excluded.filename_tags,parser_version=excluded.parser_version", existingID, root.ID, rel, original, title, titleSort, path.Dir(rel), nullString(physical), size, mtime, scanMarker, tagJSON, parser)
 	if e != nil {
 		return "", e
 	}

@@ -36,7 +36,9 @@ func (a *App) ensureIndex(ctx context.Context, al Alias) error {
 			err := a.buildIndex(shared, al)
 			a.indexMu.Lock()
 			f.err = err
-			delete(a.indexFlights, key)
+			if a.indexFlights[key] == f {
+				delete(a.indexFlights, key)
+			}
 			close(f.done)
 			a.indexMu.Unlock()
 			cancel()
@@ -52,6 +54,9 @@ func (a *App) ensureIndex(ctx context.Context, al Alias) error {
 		a.indexMu.Lock()
 		f.waiters--
 		if f.waiters == 0 {
+			if a.indexFlights[key] == f {
+				delete(a.indexFlights, key)
+			}
 			f.cancel()
 		}
 		a.indexMu.Unlock()

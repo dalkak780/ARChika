@@ -69,20 +69,23 @@ func OpenDB(c Config) (*sql.DB, error) {
 	if e != nil {
 		return nil, e
 	}
+	success := false
+	defer func() {
+		if !success {
+			db.Close()
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	var version int
 	if e = db.QueryRow("PRAGMA user_version").Scan(&version); e != nil {
-		db.Close()
 		return nil, e
 	}
 	if version > 2 {
-		db.Close()
 		return nil, fmt.Errorf("database schema %d is newer than supported", version)
 	}
 	if version == 1 {
 		tx, err := db.Begin()
 		if err != nil {
-			db.Close()
 			return nil, err
 		}
 		_, err = tx.Exec("ALTER TABLE works ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0; DROP TRIGGER IF EXISTS alias_update; DROP TRIGGER IF EXISTS alias_tags_update; PRAGMA user_version=2")
@@ -92,33 +95,26 @@ func OpenDB(c Config) (*sql.DB, error) {
 			tx.Rollback()
 		}
 		if err != nil {
-			db.Close()
 			return nil, err
 		}
 	}
 	if _, e = db.Exec(schema); e != nil {
-		db.Close()
 		return nil, e
 	}
 	if _, e = db.Exec(scanSchema); e != nil {
-		db.Close()
 		return nil, e
 	}
 	if _, e = db.Exec(searchSchema); e != nil {
-		db.Close()
 		return nil, e
 	}
 	if _, e = db.Exec(favoriteSchema); e != nil {
-		db.Close()
 		return nil, e
 	}
 	if _, e = db.Exec(failureSchema); e != nil {
-		db.Close()
 		return nil, e
 	}
 	tx, e := db.Begin()
 	if e != nil {
-		db.Close()
 		return nil, e
 	}
 	defer tx.Rollback()
@@ -152,9 +148,9 @@ func OpenDB(c Config) (*sql.DB, error) {
 		return nil, e
 	}
 	if e = tx.Commit(); e != nil {
-		db.Close()
 		return nil, e
 	}
+	success = true
 	return db, nil
 }
 func bump(tx *sql.Tx) error {

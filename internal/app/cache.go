@@ -3,8 +3,6 @@ package app
 import (
 	"container/list"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -150,19 +148,29 @@ func (c *PageCache) Load(ctx context.Context, key string, diskAdmission bool, fn
 	if el := c.disk[key]; el != nil {
 		di := el.Value.(diskItem)
 		c.dl.MoveToFront(el)
+		c.mu.Unlock()
 		f, e := os.Open(di.path)
+		var b []byte
 		if e == nil {
-			b, re := io.ReadAll(io.LimitReader(f, c.itemLimit+1))
+			b, e = io.ReadAll(io.LimitReader(f, c.itemLimit+1))
 			f.Close()
-			if re == nil && int64(len(b)) == di.size {
+		}
+		c.mu.Lock()
+		if !c.closed && c.disk[key] == el {
+			if e == nil && int64(len(b)) == di.size {
 				v := PageValue{Bytes: b, MIME: di.mime, Still: di.still}
 				c.hits++
 				c.admitMemory(key, v)
 				c.mu.Unlock()
 				return v, nil
 			}
+			c.removeDisk(el)
+			c.mu.Unlock()
+			c.removeDiskFile(di.path)
+		} else {
+			c.mu.Unlock()
 		}
-		c.removeDisk(el)
+		return c.Load(ctx, key, diskAdmission, fn)
 	}
 	flight := c.flights[key]
 	if flight == nil {
@@ -187,13 +195,17 @@ func (c *PageCache) Load(ctx context.Context, key string, diskAdmission bool, fn
 			c.mu.Lock()
 			f.value = value
 			f.err = e
-			if e == nil {
+			if e == nil && !c.closed && c.flights[key] == f {
 				c.admitMemory(key, value)
-				if diskAdmission {
-					c.admitDisk(key, value)
-				}
 			}
-			delete(c.flights, key)
+			c.mu.Unlock()
+			if e == nil && diskAdmission {
+				c.admitDisk(key, value, f)
+			}
+			c.mu.Lock()
+			if c.flights[key] == f {
+				delete(c.flights, key)
+			}
 			close(f.done)
 			c.mu.Unlock()
 			cancel()
@@ -209,6 +221,9 @@ func (c *PageCache) Load(ctx context.Context, key string, diskAdmission bool, fn
 		c.mu.Lock()
 		flight.waiters--
 		if flight.waiters == 0 {
+			if c.flights[key] == flight {
+				delete(c.flights, key)
+			}
 			flight.cancel()
 		}
 		c.mu.Unlock()
@@ -221,6 +236,10 @@ func (c *PageCache) admitMemory(key string, v PageValue) {
 	size := int64(len(v.Bytes))
 	if size > c.memoryLimit/4 || size == 0 {
 		return
+	}
+	if el := c.memory[key]; el != nil {
+		c.memoryBytes -= int64(len(el.Value.(memoryItem).value.Bytes))
+		c.ml.Remove(el)
 	}
 	for c.memoryBytes+size > c.memoryLimit || c.ml.Len() >= 2048 {
 		el := c.ml.Back()
@@ -235,29 +254,22 @@ func (c *PageCache) admitMemory(key string, v PageValue) {
 	c.memory[key] = c.ml.PushFront(memoryItem{key, v})
 	c.memoryBytes += size
 }
-func (c *PageCache) admitDisk(key string, v PageValue) {
+func (c *PageCache) admitDisk(key string, v PageValue, flight *cacheFlight) {
 	size := int64(len(v.Bytes))
-	if !c.diskReady || size > c.diskLimit/4 || size == 0 {
+	c.mu.Lock()
+	ready := c.diskReady && !c.closed && c.flights[key] == flight
+	c.mu.Unlock()
+	if !ready || size > c.diskLimit/4 || size == 0 {
 		return
 	}
-	for c.diskBytes+size > c.diskLimit || c.dl.Len() >= 8192 {
-		el := c.dl.Back()
-		if el == nil {
-			break
-		}
-		c.removeDisk(el)
-		if !c.diskReady {
-			return
-		}
-	}
-	sum := sha256.Sum256([]byte(key))
-	p := filepath.Join(c.generation, hex.EncodeToString(sum[:]))
 	tmp, e := os.CreateTemp(c.generation, ".write-")
 	if e != nil {
 		return
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
+	// Each admission owns its path so stale I/O cannot remove a replacement.
+	p := tmpPath + ".page"
 	_, e = tmp.Write(v.Bytes)
 	if ce := tmp.Close(); e == nil {
 		e = ce
@@ -268,18 +280,44 @@ func (c *PageCache) admitDisk(key string, v PageValue) {
 	if e != nil {
 		return
 	}
+	c.mu.Lock()
+	if !c.diskReady || c.closed || c.flights[key] != flight {
+		c.mu.Unlock()
+		c.removeDiskFile(p)
+		return
+	}
+	var removed []string
+	if el := c.disk[key]; el != nil {
+		removed = append(removed, el.Value.(diskItem).path)
+		c.removeDisk(el)
+	}
+	for c.diskBytes+size > c.diskLimit || c.dl.Len() >= 8192 {
+		el := c.dl.Back()
+		if el == nil {
+			break
+		}
+		removed = append(removed, el.Value.(diskItem).path)
+		c.removeDisk(el)
+	}
 	c.disk[key] = c.dl.PushFront(diskItem{key, p, v.MIME, size, v.Still})
 	c.diskBytes += size
+	c.mu.Unlock()
+	for _, path := range removed {
+		c.removeDiskFile(path)
+	}
 }
 func (c *PageCache) removeDisk(el *list.Element) {
 	di := el.Value.(diskItem)
-	if e := os.Remove(di.path); e != nil && !errors.Is(e, os.ErrNotExist) {
-		c.diskReady = false
-		return
-	}
 	c.diskBytes -= di.size
 	delete(c.disk, di.key)
 	c.dl.Remove(el)
+}
+func (c *PageCache) removeDiskFile(path string) {
+	if e := os.Remove(path); e != nil && !errors.Is(e, os.ErrNotExist) {
+		c.mu.Lock()
+		c.diskReady = false
+		c.mu.Unlock()
+	}
 }
 func (c *PageCache) Stats() map[string]any {
 	c.mu.Lock()

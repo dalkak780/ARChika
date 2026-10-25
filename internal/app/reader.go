@@ -263,7 +263,9 @@ func (a *App) thumbnail(ctx context.Context, u User, al Alias) (PageValue, strin
 	value, e := a.cache.Load(ctx, key, false, func(shared context.Context) (PageValue, error) {
 		v, e := a.loadPage(shared, u, al, p, Transform{Width: 320, Quality: 80, Format: "png", Thumbnail: true}, false)
 		if e != nil {
-			_, _ = a.DB.ExecContext(shared, "INSERT INTO thumbnails(work_id,key,status,error) VALUES(?,?,'failed','unsupported or unreadable thumbnail') ON CONFLICT(work_id) DO UPDATE SET key=excluded.key,status=excluded.status,error=excluded.error", al.WorkID, key)
+			if shared.Err() == nil && permanentThumbnailError(e) {
+				_, _ = a.DB.ExecContext(shared, "INSERT INTO thumbnails(work_id,key,status,error) VALUES(?,?,'failed','unsupported or unreadable thumbnail') ON CONFLICT(work_id) DO UPDATE SET key=excluded.key,status=excluded.status,error=excluded.error", al.WorkID, key)
+			}
 			return PageValue{}, e
 		}
 		dir := filepath.Dir(file)
@@ -296,6 +298,19 @@ func (a *App) thumbnail(ctx context.Context, u User, al Alias) (PageValue, strin
 		return v, nil
 	})
 	return value, key, e
+}
+func permanentThumbnailError(e error) bool {
+	if errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(e, errUnsupportedTransform) {
+		return true
+	}
+	switch decodeErrorCode(e) {
+	case "unsupported_format", "corrupt", "encrypted_or_password_required":
+		return true
+	}
+	return false
 }
 func (a *App) thumbnailHTTP(w http.ResponseWriter, r *http.Request, u User) {
 	select {

@@ -219,7 +219,7 @@ func (a *App) verifyRelocation(ctx context.Context, root Root, p string) (bool, 
 		if e == nil && s.physical != "" {
 			identity = physicalKey(stat, p, s.path) == s.physical
 		}
-		if !same || !identity {
+		if !same || (s.physical != "" && !identity) {
 			ok = false
 		}
 		findings = append(findings, map[string]any{"relative_path": s.path, "metadata_matches": same, "identity_matches": identity})
