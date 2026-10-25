@@ -28,7 +28,7 @@ import { pageCache, pageKey } from "./page-cache.ts";
 import type { CachedPage } from "./page-cache.ts";
 import { libraryOrigins } from "./library.tsx";
 import { WorkMetadata } from "./admin.tsx";
-import { IconButton, Icon } from "./icons.tsx";
+import { IconButton } from "./icons.tsx";
 import { ReaderPanel, PageThumbnail, PageIndicator } from "./reader-panels.tsx";
 
 const defaultOrigin: LibrarySearch = {
@@ -821,9 +821,7 @@ export default function Reader() {
             </label>
 
             <label>
-              <span>
-                <Icon name="direction" /> Reading direction
-              </span>
+              Reading direction
               <select
                 value={readingDirection}
                 onChange={(event) =>
@@ -861,7 +859,7 @@ export default function Reader() {
               />
             </label>
           </div>
-          <p className="muted" role="status">
+          <p className="muted small reader-options-status" role="status">
             {preferenceAction.isPending
               ? "Saving preferences…"
               : "Preferences save automatically. Zoom applies to this session."}

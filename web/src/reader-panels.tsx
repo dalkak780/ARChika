@@ -62,10 +62,11 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
     let timer: ReturnType<typeof setTimeout> | undefined;
     let visible = false;
     let attempts = 0;
+    let transient = true;
     let busy = false;
     let retryAt = 0;
     async function load() {
-      if (!visible || busy || objectURL || attempts >= 2 || controller.signal.aborted) return;
+      if (!visible || busy || objectURL || attempts >= 20 || controller.signal.aborted) return;
       if (Date.now() < retryAt) {
         clearTimeout(timer);
         timer = setTimeout(() => {
@@ -89,7 +90,11 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
             : Math.max(0, Date.parse(after) - Date.now());
           if (!Number.isFinite(delay)) delay = 2000;
         }
-        if (!response.ok) throw new Error("Thumbnail unavailable");
+        if (!response.ok) {
+          // Only a busy server is worth retrying; missing or unsupported pages stay failed.
+          transient = response.status === 503;
+          throw new Error("Thumbnail unavailable");
+        }
         const blob = await response.blob();
         if (controller.signal.aborted) return;
         objectURL = URL.createObjectURL(blob);
@@ -103,10 +108,12 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
           objectURL = undefined;
         }
         retryAt = Date.now() + delay;
-        if (!controller.signal.aborted && attempts < 2)
+        if (controller.signal.aborted) return;
+        if (transient && attempts < 20)
           timer = setTimeout(() => {
             void load();
           }, delay);
+        else setFailed(true);
       } finally {
         busy = false;
       }
@@ -135,7 +142,7 @@ export function PageThumbnail({ workId, page }: { workId: string; page: Page }) 
       {source && !failed ? (
         <img src={source} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
       ) : (
-        <span className="muted">Preview unavailable</span>
+        <span className="muted">{failed ? "Preview unavailable" : "Loading…"}</span>
       )}
     </span>
   );
