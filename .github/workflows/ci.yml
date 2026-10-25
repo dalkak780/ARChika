@@ -18,23 +18,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: pnpm/action-setup@v6.1.0
+      - uses: voidzero-dev/setup-vp@v1.22.0
         with:
-          package_json_file: web/package.json
+          working-directory: web
+          node-version: "24"
+          cache: true
 
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-
-      - name: Build frontend
-        run: |
-          pnpm --dir web install --frozen-lockfile
-          pnpm --dir web build
+      - name: Check frontend (format, lint, types)
+        working-directory: web
+        run: vp check
 
       - name: Test frontend
-        run: pnpm --dir web test
+        working-directory: web
+        run: vp test
+
+      - name: Build frontend
+        working-directory: web
+        run: vp build
 
       - uses: actions/setup-go@v7.0.0
         with:

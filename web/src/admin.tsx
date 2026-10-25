@@ -1,59 +1,96 @@
+import type { FormEvent, ReactNode } from "react";
+import type {
+  Root,
+  ConfigPreview,
+  Providers,
+  Provider,
+  Plugin,
+  AdminUser,
+  Job,
+  OfflinePage,
+  Move,
+  Metadata,
+  AuditRecord,
+  OfflineActionResult,
+} from "./types.ts";
 import React, { useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
-import {
-  useAuth,
-  useAPI,
-  useAction,
-  encoded,
-  ErrorNotice,
-  Pending,
-} from "./api.jsx";
+import { useAuth, useAPI, useAction, encoded, ErrorNotice, Pending } from "./api.tsx";
 const route = getRouteApi("/admin");
-const list = (value) =>
-  String(value || "")
+const formText = (value: FormDataEntryValue | null) => {
+  if (value !== null && typeof value !== "string") throw new Error("Expected a text form field");
+  return value || "";
+};
+const list = (value: FormDataEntryValue | null) =>
+  formText(value)
     .split(/[\n,]/)
     .map((item) => item.trim())
     .filter(Boolean);
-const json = (value, fallback = {}) =>
-  String(value || "").trim() ? JSON.parse(value) : fallback;
-const text = (data, key) => String(data.get(key) || "");
-function JSONField({ name, label, value = {}, required = false, rows = 5 }) {
+const json = (value: FormDataEntryValue | null, fallback: unknown = {}): unknown =>
+  formText(value).trim() ? JSON.parse(formText(value)) : fallback;
+const text = (data: FormData, key: string) => formText(data.get(key));
+function JSONField({
+  name,
+  label,
+  value = {},
+  required = false,
+  rows = 5,
+}: {
+  name: string;
+  label: string;
+  value?: unknown;
+  required?: boolean;
+  rows?: number;
+}) {
   return (
     <label>
       {label}
       <textarea
         name={name}
         rows={rows}
-        defaultValue={
-          typeof value === "string" ? value : JSON.stringify(value, null, 2)
-        }
+        defaultValue={typeof value === "string" ? value : JSON.stringify(value, null, 2)}
         spellCheck="false"
         required={required}
       />
     </label>
   );
 }
-function Check({ name, children, checked = false, value }) {
+function Check({
+  name,
+  children,
+  checked = false,
+  value,
+}: {
+  name: string;
+  children: ReactNode;
+  checked?: boolean;
+  value?: string;
+}) {
   return (
     <label className="check">
-      <input
-        type="checkbox"
-        name={name}
-        defaultChecked={checked}
-        value={value}
-      />
+      <input type="checkbox" name={name} defaultChecked={checked} value={value} />
       {children}
     </label>
   );
 }
-function Result({ value }) {
+function Result({ value }: { value: unknown }) {
   return value ? (
     <pre className="result" role="status">
       {JSON.stringify(value, null, 2)}
     </pre>
   ) : null;
 }
-function ConfirmButton({ children, message, onConfirm, disabled }) {
+function ConfirmButton({
+  children,
+  message,
+  onConfirm,
+  disabled,
+}: {
+  children: ReactNode;
+  message: string;
+  onConfirm: () => void;
+  disabled: boolean;
+}) {
   return (
     <button
       className="danger"
@@ -86,15 +123,7 @@ export default function Admin() {
         <span className="badge">Administrator</span>
       </div>
       <nav className="tabs" aria-label="Administration sections">
-        {[
-          "roots",
-          "users",
-          "jobs",
-          "offline",
-          "providers",
-          "plugins",
-          "audit",
-        ].map((name) => (
+        {["roots", "users", "jobs", "offline", "providers", "plugins", "audit"].map((name) => (
           <Link
             key={name}
             to="/admin"
@@ -128,25 +157,22 @@ export default function Admin() {
   );
 }
 function Roots() {
-  const roots = useAPI(["roots"], "/roots"),
-    preview = useAPI(["config-preview"], "/admin/config/preview"),
-    providers = useAPI(["providers"], "/admin/providers");
+  const roots = useAPI<Root[]>(["roots"], "/roots"),
+    preview = useAPI<ConfigPreview>(["config-preview"], "/admin/config/preview"),
+    providers = useAPI<Providers>(["providers"], "/admin/providers");
   const action = useAction();
   return (
     <>
       <p className="notice">
-        Original files are read-only. Adding a root does not start a scan. Paths
-        belong to the server/container filesystem; explicitly enqueue discovery
-        in Jobs.
+        Original files are read-only. Adding a root does not start a scan. Paths belong to the
+        server/container filesystem; explicitly enqueue discovery in Jobs.
       </p>
-      <ErrorNotice
-        error={roots.error || preview.error || action.error || providers.error}
-      />
+      <ErrorNotice error={roots.error || preview.error || action.error || providers.error} />
       <section className="panel">
         <h2>Configuration bootstrap</h2>
         <p>
-          Review configured roots, then apply only the selected changes.
-          Existing catalog entries are not silently replaced.
+          Review configured roots, then apply only the selected changes. Existing catalog entries
+          are not silently replaced.
         </p>
         {preview.data && (
           <form
@@ -177,11 +203,7 @@ function Roots() {
       </section>
       {roots.isPending && <Pending />}
       {roots.data?.map((root) => (
-        <RootEditor
-          key={root.id}
-          root={root}
-          providers={providers.data?.providers || []}
-        />
+        <RootEditor key={root.id} root={root} providers={providers.data?.providers || []} />
       ))}
       <details className="panel">
         <summary>Add read-only root</summary>
@@ -190,15 +212,15 @@ function Roots() {
     </>
   );
 }
-function RootForm({ root = {}, providers = [] }) {
+function RootForm({ root = {}, providers = [] }: { root?: Partial<Root>; providers?: Provider[] }) {
   const action = useAction(),
-    [error, setError] = useState(null),
-    [result, setResult] = useState(null);
-  function submit(event) {
+    [error, setError] = useState<unknown>(null),
+    [result, setResult] = useState<unknown>(null);
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     setError(null);
-    const body = {
+    const body: Record<string, unknown> = {
       key: text(data, "key"),
       name: text(data, "name"),
       path: text(data, "path"),
@@ -224,12 +246,7 @@ function RootForm({ root = {}, providers = [] }) {
       <div className="form-grid">
         <label>
           Stable configuration key
-          <input
-            name="key"
-            defaultValue={root.key}
-            required
-            pattern="[A-Za-z0-9_.-]+"
-          />
+          <input name="key" defaultValue={root.key} required pattern="[A-Za-z0-9_.-]+" />
         </label>
         <label>
           Display name
@@ -287,9 +304,8 @@ function RootForm({ root = {}, providers = [] }) {
         ))}
       </fieldset>
       <p className="muted small">
-        A path change performs bounded relocation verification. Review findings
-        before forcing adoption or explicitly reconciling. The server does not
-        move originals.
+        A path change performs bounded relocation verification. Review findings before forcing
+        adoption or explicitly reconciling. The server does not move originals.
       </p>
       <button className="primary" disabled={action.isPending}>
         {root.id ? "Save root / verify relocation" : "Add root"}
@@ -299,9 +315,9 @@ function RootForm({ root = {}, providers = [] }) {
     </form>
   );
 }
-function RootEditor({ root, providers }) {
+function RootEditor({ root, providers }: { root: Root; providers: Provider[] }) {
   const action = useAction(),
-    [preview, setPreview] = useState(null);
+    [preview, setPreview] = useState<unknown>(null);
   return (
     <details className="panel">
       <summary>
@@ -313,8 +329,8 @@ function RootEditor({ root, providers }) {
         <div className="notice">
           <strong>Pending relocation: {root.pending_path}</strong>
           <p>
-            Force may adopt the wrong collection. Reconcile explicitly traverses
-            this root; neither action moves originals.
+            Force may adopt the wrong collection. Reconcile explicitly traverses this root; neither
+            action moves originals.
           </p>
           <ConfirmButton
             message="Force this pending root relocation? Verify the target is the same collection."
@@ -357,7 +373,7 @@ function RootEditor({ root, providers }) {
       >
         Preview removing root mappings
       </button>
-      {preview && (
+      {Boolean(preview) && (
         <>
           <Result value={preview} />
           <ConfirmButton
@@ -380,14 +396,13 @@ function RootEditor({ root, providers }) {
   );
 }
 function Users() {
-  const users = useAPI(["users"], "/admin/users"),
-    roots = useAPI(["roots"], "/roots");
+  const users = useAPI<AdminUser[]>(["users"], "/admin/users"),
+    roots = useAPI<Root[]>(["roots"], "/roots");
   return (
     <>
       <p className="muted">
-        Root grants are independent. Administrator accounts have administrative
-        access. The server prevents disabling or demoting the final
-        administrator.
+        Root grants are independent. Administrator accounts have administrative access. The server
+        prevents disabling or demoting the final administrator.
       </p>
       <ErrorNotice error={users.error || roots.error} />
       {users.isPending && <Pending />}
@@ -410,13 +425,13 @@ function Users() {
     </>
   );
 }
-function UserForm({ user = {}, roots }) {
+function UserForm({ user = {}, roots }: { user?: Partial<AdminUser>; roots: Root[] }) {
   const action = useAction();
-  function submit(event) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget,
       data = new FormData(form);
-    const body = {
+    const body: Record<string, unknown> = {
       admin: data.has("admin"),
       roots: data.getAll("roots"),
       disabled: data.has("disabled"),
@@ -431,7 +446,8 @@ function UserForm({ user = {}, roots }) {
       },
       {
         onSuccess: () => {
-          form.elements.password.value = "";
+          const input = form.elements.namedItem("password");
+          if (input instanceof HTMLInputElement) input.value = "";
           if (!user.id) form.reset();
         },
       },
@@ -470,19 +486,12 @@ function UserForm({ user = {}, roots }) {
       <fieldset>
         <legend>Root access</legend>
         {roots.map((root) => (
-          <Check
-            key={root.id}
-            name="roots"
-            value={root.id}
-            checked={user.roots?.includes(root.id)}
-          >
+          <Check key={root.id} name="roots" value={root.id} checked={user.roots?.includes(root.id)}>
             {root.name}
           </Check>
         ))}
       </fieldset>
-      <button disabled={action.isPending}>
-        {user.id ? "Update account" : "Create account"}
-      </button>
+      <button disabled={action.isPending}>{user.id ? "Update account" : "Create account"}</button>
       <ErrorNotice error={action.error} />
       {action.isSuccess && <p role="status">Account saved.</p>}
     </form>
@@ -490,17 +499,21 @@ function UserForm({ user = {}, roots }) {
 }
 
 function Jobs() {
-  const jobs = useAPI(["jobs"], "/admin/jobs", { refetchInterval: 3000 }),
-    roots = useAPI(["roots"], "/roots");
+  const jobs = useAPI<Job[]>(["jobs"], "/admin/jobs", { refetchInterval: 3000 }),
+    roots = useAPI<Root[]>(["roots"], "/roots");
   const action = useAction(),
-    [preview, setPreview] = useState(null),
-    [error, setError] = useState(null);
-  async function submit(event) {
+    [preview, setPreview] = useState<unknown>(null),
+    [error, setError] = useState<unknown>(null);
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     const data = new FormData(event.currentTarget),
-      isPreview = event.nativeEvent.submitter?.value === "preview";
-    const body = {
+      isPreview =
+        (event.nativeEvent instanceof SubmitEvent &&
+        event.nativeEvent.submitter instanceof HTMLButtonElement
+          ? event.nativeEvent.submitter.value
+          : undefined) === "preview";
+    const body: Record<string, unknown> = {
       type: text(data, "type"),
       ...(data.get("root_id") ? { root_id: text(data, "root_id") } : {}),
       ...(data.get("work_ids") ? { work_ids: list(data.get("work_ids")) } : {}),
@@ -522,8 +535,8 @@ function Jobs() {
       <section className="panel">
         <h2>Explicit background work</h2>
         <p>
-          No startup scan or library-wide preconversion is performed. Preview
-          scope before submitting expensive work.
+          No startup scan or library-wide preconversion is performed. Preview scope before
+          submitting expensive work.
         </p>
         <form onSubmit={submit}>
           <div className="form-grid">
@@ -550,7 +563,7 @@ function Jobs() {
             </label>
             <label>
               Work IDs (comma or newline)
-              <textarea name="work_ids" rows="2" />
+              <textarea name="work_ids" rows={2} />
             </label>
             <label>
               Search scope
@@ -565,12 +578,7 @@ function Jobs() {
             <button name="action" value="preview" disabled={action.isPending}>
               Preview count
             </button>
-            <button
-              className="primary"
-              name="action"
-              value="enqueue"
-              disabled={action.isPending}
-            >
+            <button className="primary" name="action" value="enqueue" disabled={action.isPending}>
               Enqueue job
             </button>
           </div>
@@ -579,9 +587,7 @@ function Jobs() {
       </section>
       <div className="toolbar">
         <button
-          onClick={() =>
-            action.mutate({ path: "/admin/jobs/pause", body: { paused: true } })
-          }
+          onClick={() => action.mutate({ path: "/admin/jobs/pause", body: { paused: true } })}
         >
           Pause all jobs
         </button>
@@ -657,23 +663,21 @@ function Jobs() {
   );
 }
 function Offline() {
-  const offline = useAPI(["offline"], "/admin/offline"),
-    action = useAction();
-  const [selected, setSelected] = useState([]),
-    [preview, setPreview] = useState(null),
-    [result, setResult] = useState(null);
-  function toggle(id) {
-    setSelected((old) =>
-      old.includes(id) ? old.filter((value) => value !== id) : [...old, id],
-    );
+  const offline = useAPI<OfflinePage>(["offline"], "/admin/offline"),
+    action = useAction<OfflineActionResult>();
+  const [selected, setSelected] = useState<string[]>([]),
+    [preview, setPreview] = useState<OfflineActionResult | null>(null),
+    [result, setResult] = useState<unknown>(null);
+  function toggle(id: string) {
+    setSelected((old) => (old.includes(id) ? old.filter((value) => value !== id) : [...old, id]));
     setPreview(null);
   }
   return (
     <>
       <p className="notice">
-        An unavailable root is not proof that its works were deleted. Cleanup
-        removes catalog/cache records only when the source is still missing on
-        an online, accessible root. Originals are never deleted.
+        An unavailable root is not proof that its works were deleted. Cleanup removes catalog/cache
+        records only when the source is still missing on an online, accessible root. Originals are
+        never deleted.
       </p>
       <ErrorNotice error={offline.error || action.error} />
       <div className="toolbar">
@@ -719,7 +723,7 @@ function Offline() {
           Preview cleanup
         </button>
       </div>
-      {preview && (
+      {preview && "eligible" in preview && (
         <section className="panel">
           <h2>Cleanup preview</h2>
           <Result value={preview} />
@@ -748,8 +752,8 @@ function Offline() {
       )}
       <Result value={result} />
       <p className="muted">
-        {offline.data?.total ?? "…"} offline / missing records. This is a
-        bounded list; verify or clean selected items to reveal further records.
+        {offline.data?.total ?? "…"} offline / missing records. This is a bounded list; verify or
+        clean selected items to reveal further records.
       </p>
       {offline.isPending && <Pending />}
       <div className="table-wrap">
@@ -810,15 +814,14 @@ function Offline() {
 }
 
 function Moves() {
-  const moves = useAPI(["moves"], "/admin/moves"),
+  const moves = useAPI<Move[]>(["moves"], "/admin/moves"),
     action = useAction();
   return (
     <section className="panel">
       <h2>Possible cross-root moves</h2>
       <p>
-        Equal size and mtime are only candidate signals, not proof. Confirmation
-        keeps the old work ID and metadata, adopts destination permissions, and
-        reindexes only that work.
+        Equal size and mtime are only candidate signals, not proof. Confirmation keeps the old work
+        ID and metadata, adopts destination permissions, and reindexes only that work.
       </p>
       <ErrorNotice error={moves.error || action.error} />
       {moves.data?.map((move) => (
@@ -857,22 +860,20 @@ function Moves() {
           </button>
         </div>
       ))}
-      {moves.data?.length === 0 && (
-        <p className="muted">No pending move candidates.</p>
-      )}
+      {moves.data?.length === 0 && <p className="muted">No pending move candidates.</p>}
     </section>
   );
 }
 function Providers() {
-  const providers = useAPI(["providers"], "/admin/providers");
+  const providers = useAPI<Providers>(["providers"], "/admin/providers");
   return (
     <>
       <ErrorNotice error={providers.error} />
       <section className="panel">
         <h2>Network routing</h2>
         <p>
-          Provider requests use the server's configured DNS/DoH and proxy
-          policy. No credentials are returned to this browser.
+          Provider requests use the server's configured DNS/DoH and proxy policy. No credentials are
+          returned to this browser.
         </p>
         <dl>
           {Object.entries(providers.data?.network || {}).map(([key, value]) => (
@@ -891,22 +892,21 @@ function Providers() {
     </>
   );
 }
-function ProviderEditor({ provider }) {
+function ProviderEditor({ provider }: { provider: Provider }) {
   const action = useAction(),
-    [error, setError] = useState(null);
-  function submit(event) {
+    [error, setError] = useState<unknown>(null);
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget,
       data = new FormData(form);
     setError(null);
     try {
-      const body = {
+      const body: Record<string, unknown> = {
         enabled: data.has("enabled"),
         priority: Number(data.get("priority")),
       };
       if (text(data, "config").trim()) body.config = json(data.get("config"));
-      if (data.get("credentials"))
-        body.credentials = json(data.get("credentials"));
+      if (data.get("credentials")) body.credentials = json(data.get("credentials"));
       action.mutate(
         {
           path: `/admin/providers/${encoded(provider.id)}`,
@@ -915,7 +915,8 @@ function ProviderEditor({ provider }) {
         },
         {
           onSuccess: () => {
-            form.elements.credentials.value = "";
+            const input = form.elements.namedItem("credentials");
+            if (input instanceof HTMLInputElement) input.value = "";
           },
         },
       );
@@ -965,9 +966,8 @@ function ProviderEditor({ provider }) {
           />
         </label>
         <p className="small muted">
-          For e-hentai, supply the provider's cookie credentials; nhentai /
-          chaika may accept cookies or tokens. Stored secret values are never
-          shown. Local JSON needs no credentials.
+          For e-hentai, supply the provider's cookie credentials; nhentai / chaika may accept
+          cookies or tokens. Stored secret values are never shown. Local JSON needs no credentials.
         </p>
         <button disabled={action.isPending}>Save provider</button>
       </form>
@@ -989,26 +989,31 @@ function ProviderEditor({ provider }) {
     </details>
   );
 }
-function CrawlForm({ providers, workId }) {
-  const roots = useAPI(["roots"], "/roots"),
+function CrawlForm({ providers, workId }: { providers: Provider[]; workId?: string }) {
+  const roots = useAPI<Root[]>(["roots"], "/roots"),
     action = useAction(),
-    [error, setError] = useState(null),
-    [result, setResult] = useState(null);
-  function submit(event) {
+    [error, setError] = useState<unknown>(null),
+    [result, setResult] = useState<unknown>(null);
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     const data = new FormData(event.currentTarget);
     try {
-      const body = { provider: text(data, "provider") };
+      const body: Record<string, unknown> = { provider: text(data, "provider") };
       if (workId) body.work_ids = [workId];
       else {
         if (data.get("work_ids")) body.work_ids = list(data.get("work_ids"));
         if (data.get("root_id")) body.root_id = text(data, "root_id");
         if (data.get("query")) body.query = text(data, "query");
       }
-      if (data.get("local_json"))
-        body.local_json = json(data.get("local_json"));
-      if (event.nativeEvent.submitter?.value === "preview") body.preview = true;
+      if (data.get("local_json")) body.local_json = json(data.get("local_json"));
+      if (
+        (event.nativeEvent instanceof SubmitEvent &&
+        event.nativeEvent.submitter instanceof HTMLButtonElement
+          ? event.nativeEvent.submitter.value
+          : undefined) === "preview"
+      )
+        body.preview = true;
       if (
         !body.preview &&
         !workId &&
@@ -1022,11 +1027,7 @@ function CrawlForm({ providers, workId }) {
   }
   return (
     <section className="panel">
-      <h2>
-        {workId
-          ? "Crawl this work / import JSON"
-          : "Crawl or import local JSON"}
-      </h2>
+      <h2>{workId ? "Crawl this work / import JSON" : "Crawl or import local JSON"}</h2>
       <form onSubmit={submit}>
         <div className="form-grid">
           <label>
@@ -1054,7 +1055,7 @@ function CrawlForm({ providers, workId }) {
               </label>
               <label>
                 Work IDs
-                <textarea name="work_ids" rows="2" />
+                <textarea name="work_ids" rows={2} />
               </label>
               <label>
                 Search scope
@@ -1070,9 +1071,8 @@ function CrawlForm({ providers, workId }) {
           rows={6}
         />
         <p className="small muted">
-          Normalized import: fields object (title, description, …), tags array
-          (namespace:value), optional source_id and source_url. Ambiguous
-          matches remain candidates until reviewed.
+          Normalized import: fields object (title, description, …), tags array (namespace:value),
+          optional source_id and source_url. Ambiguous matches remain candidates until reviewed.
         </p>
         <div className="toolbar">
           <button name="action" value="preview" disabled={action.isPending}>
@@ -1089,17 +1089,16 @@ function CrawlForm({ providers, workId }) {
   );
 }
 function Plugins() {
-  const providers = useAPI(["providers"], "/admin/providers"),
+  const providers = useAPI<Providers>(["providers"], "/admin/providers"),
     action = useAction(),
-    [error, setError] = useState(null);
-  function submit(event) {
+    [error, setError] = useState<unknown>(null);
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget,
       data = new FormData(form);
     setError(null);
     try {
-      if (!data.has("trusted"))
-        throw new Error("Explicit trust confirmation is required.");
+      if (!data.has("trusted")) throw new Error("Explicit trust confirmation is required.");
       action.mutate(
         {
           path: "/admin/plugins",
@@ -1118,10 +1117,9 @@ function Plugins() {
   return (
     <>
       <p className="notice error">
-        <strong>Trusted executable plugins only.</strong> Plugins execute
-        server-side with the server user's privileges. They are not a security
-        sandbox. Review the executable, manifest, declared hosts and permissions
-        before installation.
+        <strong>Trusted executable plugins only.</strong> Plugins execute server-side with the
+        server user's privileges. They are not a security sandbox. Review the executable, manifest,
+        declared hosts and permissions before installation.
       </p>
       <ErrorNotice error={providers.error || action.error || error} />
       {providers.data?.plugins?.map((plugin) => (
@@ -1132,11 +1130,7 @@ function Plugins() {
         <form onSubmit={submit}>
           <label>
             Server executable path
-            <input
-              name="executable"
-              required
-              placeholder="/opt/archika/plugins/provider"
-            />
+            <input name="executable" required placeholder="/opt/archika/plugins/provider" />
           </label>
           <JSONField
             name="manifest"
@@ -1164,10 +1158,10 @@ function Plugins() {
     </>
   );
 }
-function PluginEditor({ plugin }) {
+function PluginEditor({ plugin }: { plugin: Plugin }) {
   const action = useAction(),
-    [error, setError] = useState(null);
-  function submit(event) {
+    [error, setError] = useState<unknown>(null);
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     const data = new FormData(event.currentTarget);
@@ -1187,19 +1181,14 @@ function PluginEditor({ plugin }) {
   return (
     <details className="panel">
       <summary>
-        {plugin.id} · {plugin.version} ·{" "}
-        {plugin.enabled ? "enabled" : "disabled"}
+        {plugin.id} · {plugin.version} · {plugin.enabled ? "enabled" : "disabled"}
       </summary>
       <Result value={plugin.manifest} />
       <form onSubmit={submit}>
         <Check name="enabled" checked={plugin.enabled}>
           Enable plugin
         </Check>
-        <JSONField
-          name="config"
-          label="Plugin configuration (JSON)"
-          value={plugin.config || {}}
-        />
+        <JSONField name="config" label="Plugin configuration (JSON)" value={plugin.config || {}} />
         <button disabled={action.isPending}>Save plugin</button>
       </form>
       <ConfirmButton
@@ -1220,32 +1209,27 @@ function PluginEditor({ plugin }) {
   );
 }
 function Audit() {
-  const audit = useAPI(["audit"], "/admin/audit");
+  const audit = useAPI<AuditRecord[]>(["audit"], "/admin/audit");
   return (
     <section className="panel">
       <h2>Recent audit records</h2>
-      <p className="muted">
-        Bounded server audit log; credentials are not displayed.
-      </p>
+      <p className="muted">Bounded server audit log; credentials are not displayed.</p>
       <ErrorNotice error={audit.error} />
       {audit.isPending ? <Pending /> : <Result value={audit.data} />}
     </section>
   );
 }
 
-export function WorkMetadata({ workId }) {
+export function WorkMetadata({ workId }: { workId: string }) {
   const { user } = useAuth(),
-    metadata = useAPI(
-      ["metadata", workId],
-      `/works/${encoded(workId)}/metadata`,
-    );
-  const providers = useAPI(["providers"], "/admin/providers", {
+    metadata = useAPI<Metadata>(["metadata", workId], `/works/${encoded(workId)}/metadata`);
+  const providers = useAPI<Providers>(["providers"], "/admin/providers", {
     enabled: !!user.admin,
   });
   const action = useAction(),
-    [error, setError] = useState(null);
+    [error, setError] = useState<unknown>(null);
   const navigate = useNavigate();
-  function submit(event) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     setError(null);
@@ -1304,9 +1288,9 @@ export function WorkMetadata({ workId }) {
           <details className="panel">
             <summary>Edit manual fields & tags</summary>
             <p className="small muted">
-              Manual overrides take precedence. Use null to clear a field or
-              reset its override by name to restore provider data. Filename
-              display titles are never rewritten by filename parsing.
+              Manual overrides take precedence. Use null to clear a field or reset its override by
+              name to restore provider data. Filename display titles are never rewritten by filename
+              parsing.
             </p>
             <form onSubmit={submit}>
               <JSONField
@@ -1316,20 +1300,20 @@ export function WorkMetadata({ workId }) {
               />
               <label>
                 Reset field overrides (comma or newline)
-                <textarea name="reset_fields" rows="2" />
+                <textarea name="reset_fields" rows={2} />
               </label>
               <div className="form-grid">
                 <label>
                   Add tags
-                  <textarea name="add_tags" rows="3" />
+                  <textarea name="add_tags" rows={3} />
                 </label>
                 <label>
                   Remove tags
-                  <textarea name="remove_tags" rows="3" />
+                  <textarea name="remove_tags" rows={3} />
                 </label>
                 <label>
                   Reset tag overrides
-                  <textarea name="reset_tags" rows="3" />
+                  <textarea name="reset_tags" rows={3} />
                 </label>
               </div>
               <button disabled={action.isPending}>Save metadata changes</button>
@@ -1344,15 +1328,10 @@ export function WorkMetadata({ workId }) {
               <article className="panel" key={candidate.id}>
                 <h4>{candidate.title}</h4>
                 <p>
-                  {candidate.provider} · {candidate.source_id} · confidence{" "}
-                  {candidate.confidence}
+                  {candidate.provider} · {candidate.source_id} · confidence {candidate.confidence}
                 </p>
                 {/^https?:\/\//.test(candidate.source_url || "") && (
-                  <a
-                    href={candidate.source_url}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
+                  <a href={candidate.source_url} rel="noreferrer" target="_blank">
                     View source ↗
                   </a>
                 )}
@@ -1384,14 +1363,10 @@ export function WorkMetadata({ workId }) {
               </article>
             ))}
           </section>
-          <CrawlForm
-            providers={providers.data?.providers || []}
-            workId={workId}
-          />
+          <CrawlForm providers={providers.data?.providers || []} workId={workId} />
           <hr />
           <p className="small muted">
-            Remove this work from the index and cache only. No original file is
-            modified or deleted.
+            Remove this work from the index and cache only. No original file is modified or deleted.
           </p>
           <ConfirmButton
             disabled={action.isPending}

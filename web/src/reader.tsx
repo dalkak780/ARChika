@@ -1,28 +1,10 @@
-import React, {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  Link,
-  getRouteApi,
-  useNavigate,
-  useLocation,
-  useRouter,
-} from "@tanstack/react-router";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { Page, WorkDetail } from "./types.ts";
+import type { Dimensions, GesturePoint, NavigationAction } from "./navigation.ts";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link, getRouteApi, useNavigate, useLocation, useRouter } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import {
-  useAPI,
-  useAction,
-  useAuth,
-  api,
-  encoded,
-  ErrorNotice,
-  Pending,
-} from "./api.jsx";
+import { useAPI, useAction, useAuth, api, encoded, ErrorNotice, Pending } from "./api.tsx";
 import {
   visiblePages,
   navigatePage,
@@ -31,12 +13,33 @@ import {
   known,
   wide,
   ignoresKeys,
-} from "./navigation.mjs";
-import { pageBlob } from "./images.js";
-import { libraryOrigins } from "./library.jsx";
-import { WorkMetadata } from "./admin.jsx";
+} from "./navigation.ts";
+import { pageBlob } from "./images.ts";
+import { libraryOrigins } from "./library.tsx";
+import { WorkMetadata } from "./admin.tsx";
+type OnDimensions = (ordinal: number, width: number, height: number) => void;
+interface PageImageProps {
+  workId: string;
+  page: Page;
+  width: number;
+  onDimensions: OnDimensions;
+  className?: string;
+  onLoaded?: () => void;
+}
+interface ContinuousReaderProps {
+  workId: string;
+  pages: Page[];
+  index: number;
+  setIndex: (index: number) => void;
+  resize: number;
+  zoom: number;
+  onDimensions: OnDimensions;
+  pointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  pointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  pointerCancel: () => void;
+}
 const route = getRouteApi("/read/$workId");
-const positions = new Map();
+const positions = new Map<string, number>();
 const readerId =
   globalThis.crypto.randomUUID?.() ||
   Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (value) =>
@@ -50,16 +53,18 @@ function PageImage({
   onDimensions,
   className = "",
   onLoaded,
-}) {
-  const [image, setImage] = useState(null),
-    [error, setError] = useState(null),
+}: PageImageProps) {
+  const [image, setImage] = useState<
+      (Awaited<ReturnType<typeof pageBlob>> & { url: string }) | null
+    >(null),
+    [error, setError] = useState<unknown>(null),
     [retry, setRetry] = useState(0);
-  const requestController = useRef(null),
+  const requestController = useRef<AbortController | null>(null),
     fallbackAttempted = useRef(false);
   const loadKey = `${workId}/${page.entry_id}/${page.ordinal}/${width}/${retry}`;
   useEffect(() => {
     const controller = new AbortController();
-    let objectURL;
+    let objectURL: string | undefined;
     requestController.current = controller;
     setImage(null);
     setError(null);
@@ -74,7 +79,7 @@ function PageImage({
         if (!controller.signal.aborted) setError(error);
       }
     }
-    load();
+    void load();
     return () => {
       controller.abort();
       if (objectURL) URL.revokeObjectURL(objectURL);
@@ -98,13 +103,8 @@ function PageImage({
     fallbackAttempted.current = true;
     try {
       const controller = requestController.current;
-      const result = await pageBlob(
-        workId,
-        page,
-        width,
-        controller.signal,
-        true,
-      );
+      if (!controller) return;
+      const result = await pageBlob(workId, page, width, controller.signal, true);
       if (controller.signal.aborted) return;
       setImage({ ...result, url: URL.createObjectURL(result.blob) });
     } catch (error) {
@@ -115,16 +115,13 @@ function PageImage({
     <figure
       className={`reader-image ${className}`}
       style={{
-        aspectRatio:
-          page.width && page.height ? `${page.width}/${page.height}` : "2/3",
+        aspectRatio: page.width && page.height ? `${page.width}/${page.height}` : "2/3",
       }}
     >
       {error ? (
         <div className="page-error">
           <ErrorNotice error={error} />
-          <button onClick={() => setRetry((n) => n + 1)}>
-            Retry page {page.ordinal + 1}
-          </button>
+          <button onClick={() => setRetry((n) => n + 1)}>Retry page {page.ordinal + 1}</button>
         </div>
       ) : image ? (
         <>
@@ -144,8 +141,7 @@ function PageImage({
           />
           {image.fallback && (
             <figcaption>
-              Still-frame compatibility representation; animation is not
-              preserved.
+              Still-frame compatibility representation; animation is not preserved.
             </figcaption>
           )}
         </>
@@ -165,17 +161,17 @@ export default function Reader() {
     router = useRouter();
   const { user } = useAuth(),
     action = useAction();
-  const result = useAPI(["work", workId], `/works/${encoded(workId)}`, {
+  const result = useAPI<WorkDetail>(["work", workId], `/works/${encoded(workId)}`, {
     staleTime: 60_000,
   });
   const urlPage = new URLSearchParams(searchStr).has("page") ? search.page : null;
-  const [index, setIndex] = useState(
-    () => (urlPage === null ? positions.get(workId) ?? 0 : urlPage - 1),
+  const [index, setIndex] = useState(() =>
+    urlPage === null ? (positions.get(workId) ?? 0) : urlPage - 1,
   );
   const [location, setLocation] = useState({ workId, page: urlPage });
   if (location.workId !== workId || location.page !== urlPage) {
     setLocation({ workId, page: urlPage });
-    setIndex(urlPage === null ? positions.get(workId) ?? 0 : urlPage - 1);
+    setIndex(urlPage === null ? (positions.get(workId) ?? 0) : urlPage - 1);
   }
   const [mode, setMode] = useState(user.preferences?.reader_mode || "paged"),
     [layout, setLayout] = useState(user.preferences?.layout || "single");
@@ -184,11 +180,11 @@ export default function Reader() {
     [zoom, setZoom] = useState(1);
   const [chrome, setChrome] = useState(true),
     [metadata, setMetadata] = useState(false),
-    [dimensions, setDimensions] = useState({}),
+    [dimensions, setDimensions] = useState<Record<number, Dimensions>>({}),
     [fullscreenError, setFullscreenError] = useState("");
   const enteredImmersive = useRef(false),
-    surface = useRef(null),
-    pointer = useRef(null),
+    surface = useRef<HTMLElement>(null),
+    pointer = useRef<(GesturePoint & { id: number; type: string }) | null>(null),
     lastNavigation = useRef({ time: performance.now(), index }),
     velocity = useRef(0),
     direction = useRef(1);
@@ -210,18 +206,18 @@ export default function Reader() {
   useEffect(() => {
     if (!pages.length) return;
     positions.set(workId, pageIndex);
-    if (positions.size > 64) positions.delete(positions.keys().next().value);
+    if (positions.size > 64) positions.delete(positions.keys().next().value!);
     if (urlPage !== pageIndex + 1)
-      navigate({
+      void navigate({
         search: (old) => ({ ...old, page: pageIndex + 1 }),
         replace: true,
       });
-  }, [workId, pageIndex, pages.length, urlPage]);
+  }, [workId, pageIndex, pages.length, urlPage, navigate]);
   useEffect(() => {
     lastNavigation.current = { time: performance.now(), index: pageIndex };
   }, [workId, pageIndex]);
   const dimensionsLoaded = useCallback(
-    (ordinal, width, height) =>
+    (ordinal: number, width: number, height: number) =>
       setDimensions((old) =>
         old[ordinal]?.width === width && old[ordinal]?.height === height
           ? old
@@ -230,7 +226,7 @@ export default function Reader() {
     [],
   );
   const go = useCallback(
-    (action) => {
+    (action: NavigationAction | "chrome") => {
       if (action === "chrome") {
         setChrome((value) => !value);
         return;
@@ -260,7 +256,7 @@ export default function Reader() {
       enteredImmersive.current = false;
       router.history.back();
     } else
-      navigate({
+      void navigate({
         search: (old) => ({ ...old, immersive: false }),
         replace: true,
       });
@@ -269,12 +265,12 @@ export default function Reader() {
     if (search.immersive) return exitImmersive();
     enteredImmersive.current = true;
     setChrome(false);
-    navigate({
+    void navigate({
       search: (old) => ({ ...old, page: pageIndex + 1, immersive: true }),
     });
   }
   useEffect(() => {
-    function key(event) {
+    function key(event: KeyboardEvent) {
       if (event.key === "Escape" && (metadata || !ignoresKeys(event.target))) {
         if (metadata) setMetadata(false);
         else if (search.immersive) exitImmersive();
@@ -300,12 +296,19 @@ export default function Reader() {
           signal: controller.signal,
           body: {
             reader_id: readerId,
-            page: pages[pageIndex].ordinal,
+            page: pages[pageIndex]!.ordinal,
             direction: direction.current,
             velocity: velocity.current,
             visible: mode === "scroll" ? 1 : shown.length,
             byte_budget: 16 * 1024 * 1024,
-            pressure: navigator.connection?.saveData ? 0.9 : 0,
+            pressure:
+              "connection" in navigator &&
+              navigator.connection &&
+              typeof navigator.connection === "object" &&
+              "saveData" in navigator.connection &&
+              navigator.connection.saveData
+                ? 0.9
+                : 0,
           },
         }).catch(() => {}),
       220,
@@ -326,16 +329,10 @@ export default function Reader() {
   async function fullscreen() {
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
-      else if (surface.current?.requestFullscreen)
-        await surface.current.requestFullscreen();
-      else
-        setFullscreenError(
-          "Browser fullscreen is unavailable. Immersive reading still works.",
-        );
+      else if (surface.current?.requestFullscreen) await surface.current.requestFullscreen();
+      else setFullscreenError("Browser fullscreen is unavailable. Immersive reading still works.");
     } catch {
-      setFullscreenError(
-        "Fullscreen was declined. Immersive reading still works.",
-      );
+      setFullscreenError("Fullscreen was declined. Immersive reading still works.");
     }
   }
   function preferences() {
@@ -349,15 +346,14 @@ export default function Reader() {
   function pointerCancel() {
     pointer.current = null;
   }
-  function ignoresPointer(target) {
+  function ignoresPointer(target: EventTarget | null) {
     return (
       ignoresKeys(target) ||
-      !!target?.closest?.(
-        'input, button, a, dialog, [role="dialog"], [role="button"]',
-      )
+      (target instanceof Element &&
+        !!target.closest('input, button, a, dialog, [role="dialog"], [role="button"]'))
     );
   }
-  function pointerDown(event) {
+  function pointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (ignoresPointer(event.target)) return;
     if (pointer.current && pointer.current.id !== event.pointerId) {
       pointer.current.cancelled = true;
@@ -372,7 +368,7 @@ export default function Reader() {
       type: event.pointerType,
     };
   }
-  function pointerUp(event) {
+  function pointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     const start = pointer.current;
     pointer.current = null;
     if (
@@ -397,11 +393,12 @@ export default function Reader() {
       },
     );
     if (action === "chrome" && start.type === "mouse" && mode !== "scroll") {
-      const bounds = surface.current.getBoundingClientRect(),
+      const bounds = surface.current!.getBoundingClientRect(),
         position = (event.clientX - bounds.left) / bounds.width;
       go(position < 0.23 ? "previous" : position > 0.77 ? "next" : "chrome");
     } else if (action) go(action);
   }
+  const zoomStyle: CSSProperties & { "--zoom": number } = { "--zoom": zoom };
   const origin = libraryOrigins.get(workId),
     work = result.data?.work;
   return (
@@ -427,39 +424,51 @@ export default function Reader() {
             Library
           </Link>
           <strong className="reader-title">{work?.title || "Reader"}</strong>
-          <button onClick={immersive}>
-            {search.immersive ? "Normal view" : "Immersive"}
-          </button>
+          <button onClick={immersive}>{search.immersive ? "Normal view" : "Immersive"}</button>
           <button onClick={fullscreen}>Browser fullscreen</button>
         </div>
         <div className="toolbar reader-options">
           <label>
             Mode
-            <select value={mode} onChange={(e) => setMode(e.target.value)}>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value === "scroll" ? "scroll" : "paged")}
+            >
               <option value="paged">Paged</option>
               <option value="scroll">Continuous</option>
             </select>
           </label>
           <label>
             Layout
-            <select value={layout} onChange={(e) => setLayout(e.target.value)}>
+            <select
+              value={layout}
+              onChange={(e) => setLayout(e.target.value === "spread" ? "spread" : "single")}
+            >
               <option value="single">Single</option>
               <option value="spread">Two-page spread</option>
             </select>
           </label>
           <label>
             Fit
-            <select value={fit} onChange={(e) => setFit(e.target.value)}>
+            <select
+              value={fit}
+              onChange={(e) =>
+                setFit(
+                  e.target.value === "width"
+                    ? "width"
+                    : e.target.value === "original"
+                      ? "original"
+                      : "viewport",
+                )
+              }
+            >
               <option value="viewport">Viewport</option>
               <option value="width">Width</option>
             </select>
           </label>
           <label>
             Zoom
-            <select
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-            >
+            <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
               {[0.75, 1, 1.25, 1.5, 2, 3].map((value) => (
                 <option key={value} value={value}>
                   {Math.round(value * 100)}%
@@ -469,10 +478,7 @@ export default function Reader() {
           </label>
           <label>
             Resize
-            <select
-              value={resize}
-              onChange={(e) => setResize(Number(e.target.value))}
-            >
+            <select value={resize} onChange={(e) => setResize(Number(e.target.value))}>
               <option value="0">Original dimensions</option>
               {[800, 1200, 1600, 2400].map((value) => (
                 <option key={value} value={value}>
@@ -491,7 +497,7 @@ export default function Reader() {
                 action.mutate({
                   path: `/works/${encoded(workId)}/favorite`,
                   method: "PUT",
-                  body: { favorite: !work.favorite },
+                  body: { favorite: !work!.favorite },
                   invalidate: [["work", workId], ["works"], ["works-infinite"]],
                 })
               }
@@ -499,10 +505,7 @@ export default function Reader() {
               {work?.favorite ? "Remove favorite" : "Add favorite"}
             </button>
           </>
-          <button
-            onClick={() => setMetadata((value) => !value)}
-            aria-expanded={metadata}
-          >
+          <button onClick={() => setMetadata((value) => !value)} aria-expanded={metadata}>
             Metadata
           </button>
           {pages.length > 0 && (
@@ -513,7 +516,7 @@ export default function Reader() {
                     path: `/works/${encoded(workId)}/cover`,
                     method: "PUT",
                     invalidate: [["work", workId], ["works"], ["works-infinite"]],
-                    body: { entry_id: pages[pageIndex].entry_id },
+                    body: { entry_id: pages[pageIndex]!.entry_id },
                   })
                 }
               >
@@ -546,11 +549,7 @@ export default function Reader() {
       <ErrorNotice error={result.error || action.error} />
       {result.isPending && <Pending>Indexing pages on demand…</Pending>}
       {metadata && (
-        <section
-          className="metadata-panel panel"
-          role="dialog"
-          aria-label="Work metadata"
-        >
+        <section className="metadata-panel panel" role="dialog" aria-label="Work metadata">
           <button onClick={() => setMetadata(false)}>Close metadata</button>
           <WorkMetadata workId={workId} />
         </section>
@@ -590,15 +589,12 @@ export default function Reader() {
               onPointerCancel={pointerCancel}
               onLostPointerCapture={pointerCancel}
             >
-              <div
-                className={`spread ${shown.length === 2 ? "two" : ""}`}
-                style={{ "--zoom": zoom }}
-              >
+              <div className={`spread ${shown.length === 2 ? "two" : ""}`} style={zoomStyle}>
                 {shown.map((i) => (
                   <PageImage
-                    key={`${workId}-${pages[i].entry_id}-${pages[i].ordinal}`}
+                    key={`${workId}-${pages[i]!.entry_id}-${pages[i]!.ordinal}`}
                     workId={workId}
-                    page={pages[i]}
+                    page={pages[i]!}
                     width={resize}
                     onDimensions={dimensionsLoaded}
                   />
@@ -612,7 +608,7 @@ export default function Reader() {
                   <div className="dimension-probe" aria-hidden="true">
                     <PageImage
                       workId={workId}
-                      page={pages[pageIndex + 1]}
+                      page={pages[pageIndex + 1]!}
                       width={resize}
                       onDimensions={dimensionsLoaded}
                     />
@@ -638,17 +634,12 @@ export default function Reader() {
               />
             </label>
             <span role="status">
-              {mode === "paged" && shown.length > 1
-                ? `–${shown.at(-1) + 1} `
-                : ""}
+              {mode === "paged" && shown.length > 1 ? `–${shown.at(-1)! + 1} ` : ""}
               of {pages.length}
             </span>
             <button
               onClick={() => go("next")}
-              disabled={
-                (mode === "paged" ? shown.at(-1) : pageIndex) >=
-                pages.length - 1
-              }
+              disabled={(mode === "paged" ? shown.at(-1)! : pageIndex) >= pages.length - 1}
             >
               Next →
             </button>
@@ -656,9 +647,7 @@ export default function Reader() {
         </>
       ) : (
         !result.isPending &&
-        !result.error && (
-          <div className="empty">This work has no readable pages.</div>
-        )
+        !result.error && <div className="empty">This work has no readable pages.</div>
       )}
     </main>
   );
@@ -674,8 +663,8 @@ function ContinuousReader({
   pointerDown,
   pointerUp,
   pointerCancel,
-}) {
-  const container = useRef(null),
+}: ContinuousReaderProps) {
+  const container = useRef<HTMLDivElement>(null),
     programmatic = useRef(false),
     lastReported = useRef(index),
     [width, setWidth] = useState(800);
@@ -685,17 +674,15 @@ function ContinuousReader({
     estimateSize: (i) =>
       Math.max(
         window.innerHeight * 0.35,
-        pages[i].width && pages[i].height
-          ? (width * zoom * pages[i].height) / pages[i].width + 16
+        pages[i]!.width && pages[i]!.height
+          ? (width * zoom * pages[i]!.height) / pages[i]!.width + 16
           : width * 1.4,
       ),
     overscan: 1,
-    getItemKey: (i) => pages[i].entry_id || pages[i].ordinal,
+    getItemKey: (i) => pages[i]!.entry_id || pages[i]!.ordinal,
   });
   useLayoutEffect(() => {
-    const observer = new ResizeObserver((entries) =>
-      setWidth(entries[0].contentRect.width),
-    );
+    const observer = new ResizeObserver((entries) => setWidth(entries[0]!.contentRect.width));
     if (container.current) observer.observe(container.current);
     return () => observer.disconnect();
   }, []);
@@ -715,7 +702,7 @@ function ContinuousReader({
   const rows = virtual.getVirtualItems();
   function scroll() {
     if (programmatic.current) return;
-    const offset = container.current.scrollTop;
+    const offset = container.current!.scrollTop;
     const current = rows.find((row) => row.end > offset + 30);
     if (current && current.index !== lastReported.current) {
       lastReported.current = current.index;
@@ -731,7 +718,7 @@ function ContinuousReader({
       onPointerUp={pointerUp}
       onPointerCancel={pointerCancel}
       onLostPointerCapture={pointerCancel}
-      tabIndex="0"
+      tabIndex={0}
       aria-label="Continuous reading surface"
     >
       <div
@@ -751,7 +738,7 @@ function ContinuousReader({
           >
             <PageImage
               workId={workId}
-              page={pages[row.index]}
+              page={pages[row.index]!}
               width={resize}
               onDimensions={onDimensions}
             />

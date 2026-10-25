@@ -1,12 +1,7 @@
-import test from "node:test";
+import type { KeyTarget } from "./navigation.ts";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
-import {
-  visiblePages,
-  navigatePage,
-  keyAction,
-  ignoresKeys,
-  gestureAction,
-} from "./navigation.mjs";
+import { visiblePages, navigatePage, keyAction, ignoresKeys, gestureAction } from "./navigation.ts";
 const portrait = { width: 600, height: 900 },
   landscape = { width: 1200, height: 600 };
 test("mixed spreads consume each source exactly once, including odd tail", () => {
@@ -30,11 +25,11 @@ test("slow dimensions never skip and known shown boundary stays stable", () => {
   assert.equal(navigatePage(pages, 0, "next", "spread", shown), 1);
   assert.deepEqual(visiblePages(pages, 2, "spread"), [2]);
 });
-function focus(tag, type, isContentEditable = false) {
-  const target = {
+function focus(tag: string, type?: string, isContentEditable = false) {
+  const target: KeyTarget = {
     type,
     isContentEditable,
-    closest: (selector) => selector.split(", ").includes(tag) ? target : null,
+    closest: (selector: string) => (selector.split(", ").includes(tag) ? target : null),
   };
   return target;
 }
@@ -58,9 +53,7 @@ test("keys ignore text entry and arrow-driven inputs but work from buttons, link
     focus("dialog"),
     focus('[role="dialog"]'),
     focus('[role="button"]'),
-    ...["button", "submit", "reset", "image", "checkbox"].map(
-      (type) => focus("input", type),
-    ),
+    ...["button", "submit", "reset", "image", "checkbox"].map((type) => focus("input", type)),
   ]) {
     assert.equal(ignoresKeys(target), false);
     assert.equal(keyAction({ key: "ArrowRight", target }), "next");

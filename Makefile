@@ -7,6 +7,7 @@ build:
 
 test: build
 	go test ./...
+	pnpm --dir web check
 	pnpm --dir web test
 
 race: build

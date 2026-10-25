@@ -52,7 +52,7 @@ Keep the SQLite data directory on a local filesystem; WAL mode doesn't work reli
 
 ## Building from source
 
-Requirements: Go 1.25.1+, Node.js 24 and pnpm 12. Linux is the production target; macOS works for development.
+Requirements: Go 1.25.1+, Node.js 24.11+ and pnpm 12. Linux is the production target; macOS works for development.
 
 ```sh
 make build
@@ -68,6 +68,8 @@ A plain `go build` uses a pure-Go image backend. AVIF and JXL pages are still se
 ## Configuration
 
 Configuration is JSON or YAML; see [`archika.example.yaml`](archika.example.yaml). Environment variables are not expanded inside the file.
+
+Byte-size settings accept plain byte counts or strings such as "64MiB" or "1.5GB"; KiB/MiB/GiB/TiB and K/M/G/T are 1024-based, while KB/MB/GB/TB are 1000-based.
 
 `allowed_paths` is the set of directories an administrator may register as library roots. The UI can't register paths outside it.
 
@@ -203,8 +205,12 @@ On Linux, plugins get data-size and CPU limits. Keep the container's memory, PID
 ## Development
 
 ```sh
-make test   # Go and frontend tests
+make test   # Go tests, frontend check (oxfmt, oxlint, TypeScript) and tests
 make race   # Go tests with the race detector
+
+# Frontend only (web/ uses Vite+; vp wraps Vite, Vitest, Oxlint and Oxfmt)
+pnpm --dir web dev     # dev server, proxies /api to 127.0.0.1:8080
+pnpm --dir web check   # format, lint and type check
 
 # Optional, slower checks
 ARCHIKA_SCALE=100000 go test ./internal/app -run TestSearchScale -v -count=1

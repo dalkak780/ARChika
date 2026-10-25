@@ -1,22 +1,18 @@
+import type { FormEvent, UIEvent } from "react";
+import type { InfiniteData } from "@tanstack/react-query";
+import type { Work, WorksPage, Root, SavedSearch, LibrarySearch } from "./types.ts";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import {
-  api,
-  encoded,
-  useAPI,
-  useAction,
-  ErrorNotice,
-  Pending,
-} from "./api.jsx";
+import { api, APIError, encoded, useAPI, useAction, ErrorNotice, Pending } from "./api.tsx";
 
 const route = getRouteApi("/");
-export const libraryOrigins = new Map();
-const scrollPositions = new Map();
-const failedThumbnails = new Map();
-const infiniteResume = new Map();
-function workPath(search, page, cursor) {
+export const libraryOrigins = new Map<string, LibrarySearch>();
+const scrollPositions = new Map<string, number>();
+const failedThumbnails = new Map<string, boolean>();
+const infiniteResume = new Map<string, { page: number; offset: number }>();
+function workPath(search: LibrarySearch, page: number, cursor?: string) {
   const params = new URLSearchParams({
     q: search.q,
     sort: search.sort,
@@ -28,17 +24,14 @@ function workPath(search, page, cursor) {
   if (cursor) params.set("cursor", cursor);
   return `/works?${params}`;
 }
-function Card({ work, search }) {
-  const action = useAction();
+function Card({ work, search }: { work: Work; search: LibrarySearch }) {
+  const action = useAction<unknown, { favorite: boolean }>();
   const client = useQueryClient();
   const thumbnailKey = `${work.id}:${work.version}`;
-  const [failed, setFailed] = useState(() =>
-    failedThumbnails.has(thumbnailKey),
-  );
+  const [failed, setFailed] = useState(() => failedThumbnails.has(thumbnailKey));
   function failThumbnail() {
     failedThumbnails.set(thumbnailKey, true);
-    if (failedThumbnails.size > 512)
-      failedThumbnails.delete(failedThumbnails.keys().next().value);
+    if (failedThumbnails.size > 512) failedThumbnails.delete(failedThumbnails.keys().next().value!);
     setFailed(true);
   }
   return (
@@ -49,18 +42,14 @@ function Card({ work, search }) {
         search={{ page: 1, immersive: false }}
         onClick={() => {
           libraryOrigins.set(String(work.id), search);
-          if (libraryOrigins.size > 64)
-            libraryOrigins.delete(libraryOrigins.keys().next().value);
+          if (libraryOrigins.size > 64) libraryOrigins.delete(libraryOrigins.keys().next().value!);
         }}
         className="work-link"
       >
         <div className="cover">
           {failed ? (
             <span className="cover-placeholder" aria-label="Cover unavailable">
-              ▧
-              <small>
-                {work.cover_unresolved ? "Cover needs selection" : "No preview"}
-              </small>
+              ▧<small>{work.cover_unresolved ? "Cover needs selection" : "No preview"}</small>
             </span>
           ) : (
             <img
@@ -71,17 +60,13 @@ function Card({ work, search }) {
               onError={failThumbnail}
             />
           )}
-          <span className={`status ${work.index_status}`}>
-            {work.index_status || "registered"}
-          </span>
+          <span className={`status ${work.index_status}`}>{work.index_status || "registered"}</span>
         </div>
         <h3 title={work.title}>{work.title}</h3>
         <p title={work.relative_path}>
           {work.root_name} · {work.relative_path}
         </p>
-        {work.error_code && (
-          <small className="error-text">{work.error_code}</small>
-        )}
+        {work.error_code && <small className="error-text">{work.error_code}</small>}
       </Link>
       <button
         className="favorite-toggle"
@@ -98,23 +83,18 @@ function Card({ work, search }) {
             },
             {
               onSuccess: (_, variables) => {
-                const updatePage = (page) => ({
+                const updatePage = <T extends WorksPage>(page: T): T => ({
                   ...page,
                   items: page.items.map((item) =>
-                    item.id === work.id
-                      ? { ...item, favorite: variables.body.favorite }
-                      : item,
+                    item.id === work.id ? { ...item, favorite: variables.body!.favorite } : item,
                   ),
                 });
-                client.setQueriesData({ queryKey: ["works"] }, (data) =>
+                client.setQueriesData<WorksPage>({ queryKey: ["works"] }, (data) =>
                   data ? updatePage(data) : data,
                 );
-                client.setQueriesData(
+                client.setQueriesData<InfiniteData<WorksPage & { pageNumber: number }>>(
                   { queryKey: ["works-infinite"] },
-                  (data) =>
-                    data
-                      ? { ...data, pages: data.pages.map(updatePage) }
-                      : data,
+                  (data) => (data ? { ...data, pages: data.pages.map(updatePage) } : data),
                 );
               },
             },
@@ -132,15 +112,15 @@ export default function Library() {
     navigate = useNavigate({ from: "/" });
   const [query, setQuery] = useState(search.q),
     [savedName, setSavedName] = useState("");
-  const roots = useAPI(["roots"], "/roots"),
-    saved = useAPI(["saved-searches"], "/saved-searches"),
+  const roots = useAPI<Root[]>(["roots"], "/roots"),
+    saved = useAPI<SavedSearch[]>(["saved-searches"], "/saved-searches"),
     action = useAction();
   useEffect(() => setQuery(search.q), [search.q]);
-  const update = (patch) =>
+  const update = (patch: Partial<LibrarySearch>) =>
     navigate({
       search: (previous) => ({ ...previous, ...patch, page: patch.page ?? 1 }),
     });
-  function save(event) {
+  function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     action.mutate(
       {
@@ -158,18 +138,13 @@ export default function Library() {
           <h1>Library</h1>
           <button
             aria-pressed={search.q === "favorite:true"}
-            onClick={() =>
-              update({ q: search.q === "favorite:true" ? "" : "favorite:true" })
-            }
+            onClick={() => update({ q: search.q === "favorite:true" ? "" : "favorite:true" })}
           >
             Favorites
           </button>
         </div>
         <div className="segmented" aria-label="Library view">
-          <button
-            aria-pressed={search.view === "pages"}
-            onClick={() => update({ view: "pages" })}
-          >
+          <button aria-pressed={search.view === "pages"} onClick={() => update({ view: "pages" })}>
             Pages
           </button>
           <button
@@ -185,7 +160,7 @@ export default function Library() {
           className="search-form"
           onSubmit={(event) => {
             event.preventDefault();
-            update({ q: query });
+            void update({ q: query });
           }}
         >
           <label className="grow">
@@ -202,10 +177,7 @@ export default function Library() {
         <div className="toolbar">
           <label>
             Root
-            <select
-              value={search.root}
-              onChange={(e) => update({ root: e.target.value })}
-            >
+            <select value={search.root} onChange={(e) => update({ root: e.target.value })}>
               <option value="">All accessible roots</option>
               {roots.data?.map((root) => (
                 <option key={root.id} value={root.id}>
@@ -216,10 +188,7 @@ export default function Library() {
           </label>
           <label>
             Sort
-            <select
-              value={search.sort}
-              onChange={(e) => update({ sort: e.target.value })}
-            >
+            <select value={search.sort} onChange={(e) => update({ sort: e.target.value })}>
               <option value="recent">Recently indexed</option>
               <option value="title">Title</option>
               <option value="mtime">File modified</option>
@@ -250,19 +219,15 @@ export default function Library() {
         <details>
           <summary>Search syntax & saved searches</summary>
           <p className="small muted">
-            Combine AND, OR, NOT and parentheses. Use quoted phrases, title:,
-            path:, root:, tag:namespace:value, word: or substring:. One–two
-            character terms match indexed prefixes/exact values; longer terms
-            match substrings. Only accessible root paths are searched.
+            Combine AND, OR, NOT and parentheses. Use quoted phrases, title:, path:, root:,
+            tag:namespace:value, word: or substring:. One–two character terms match indexed
+            prefixes/exact values; longer terms match substrings. Only accessible root paths are
+            searched.
           </p>
           <div className="chips">
             {saved.data?.map((item) => (
               <span key={item.id}>
-                <button
-                  onClick={() =>
-                    update({ q: item.query, sort: item.sort || "recent" })
-                  }
-                >
+                <button onClick={() => update({ q: item.query, sort: item.sort || "recent" })}>
                   {item.name}
                 </button>
                 <button
@@ -294,26 +259,28 @@ export default function Library() {
       </section>
       <ErrorNotice error={roots.error || saved.error || action.error} />
       {search.view === "infinite" ? (
-        <InfiniteLibrary
-          key={JSON.stringify({ ...search, page: undefined })}
-          search={search}
-        />
+        <InfiniteLibrary key={JSON.stringify({ ...search, page: undefined })} search={search} />
       ) : (
         <PagedLibrary search={search} update={update} />
       )}
     </main>
   );
 }
-function PagedLibrary({ search, update }) {
+function PagedLibrary({
+  search,
+  update,
+}: {
+  search: LibrarySearch;
+  update: (patch: Partial<LibrarySearch>) => void;
+}) {
   const key = JSON.stringify(search),
-    result = useAPI(["works", search], workPath(search, search.page));
+    result = useAPI<WorksPage>(["works", search], workPath(search, search.page));
   useLayoutEffect(() => {
     if (result.isPending) return;
     window.scrollTo(0, scrollPositions.get(key) || 0);
     const save = () => {
       scrollPositions.set(key, window.scrollY);
-      if (scrollPositions.size > 64)
-        scrollPositions.delete(scrollPositions.keys().next().value);
+      if (scrollPositions.size > 64) scrollPositions.delete(scrollPositions.keys().next().value!);
     };
     window.addEventListener("scroll", save, { passive: true });
     return () => window.removeEventListener("scroll", save);
@@ -337,17 +304,11 @@ function PagedLibrary({ search, update }) {
             {!result.data.items.length && (
               <div className="empty">
                 <h2>No matching works</h2>
-                <p>
-                  Change the search or ask an administrator to explicitly scan
-                  an online root.
-                </p>
+                <p>Change the search or ask an administrator to explicitly scan an online root.</p>
               </div>
             )}
             <nav className="pagination" aria-label="Pages">
-              <button
-                disabled={search.page <= 1}
-                onClick={() => update({ page: search.page - 1 })}
-              >
+              <button disabled={search.page <= 1} onClick={() => update({ page: search.page - 1 })}>
                 ← Previous
               </button>
               <form
@@ -366,17 +327,12 @@ function PagedLibrary({ search, update }) {
                     name="page"
                     type="number"
                     min="1"
-                    max={Math.max(
-                      1,
-                      Math.ceil(result.data.total / search.limit),
-                    )}
+                    max={Math.max(1, Math.ceil(result.data.total / search.limit))}
                     defaultValue={search.page}
                   />
                 </label>
                 <button>Go</button>
-                <span>
-                  of {Math.max(1, Math.ceil(result.data.total / search.limit))}
-                </span>
+                <span>of {Math.max(1, Math.ceil(result.data.total / search.limit))}</span>
               </form>
               <button
                 disabled={search.page * search.limit >= result.data.total}
@@ -391,28 +347,27 @@ function PagedLibrary({ search, update }) {
     </>
   );
 }
-function InfiniteLibrary({ search }) {
+function InfiniteLibrary({ search }: { search: LibrarySearch }) {
   const client = useQueryClient();
-  const container = useRef(null),
+  const container = useRef<HTMLDivElement>(null),
     [columns, setColumns] = useState(4),
     [refreshCount, setRefreshCount] = useState(0),
     key = JSON.stringify(search);
+  const initialPageParam: { page: number; cursor?: string } = {
+    page: refreshCount ? 1 : infiniteResume.get(key)?.page || search.page,
+  };
   const result = useInfiniteQuery({
     queryKey: ["works-infinite", search],
-    initialPageParam: {
-      page: refreshCount ? 1 : infiniteResume.get(key)?.page || search.page,
-    },
+    initialPageParam,
     maxPages: 5,
     queryFn: async ({ pageParam, signal }) => ({
-      ...(await api(workPath(search, pageParam.page, pageParam.cursor), {
+      ...(await api<WorksPage>(workPath(search, pageParam.page, pageParam.cursor), {
         signal,
       })),
       pageNumber: pageParam.page,
     }),
     getNextPageParam: (last) =>
-      last.next_cursor
-        ? { page: last.pageNumber + 1, cursor: last.next_cursor }
-        : undefined,
+      last.next_cursor ? { page: last.pageNumber + 1, cursor: last.next_cursor } : undefined,
     getPreviousPageParam: (first) =>
       first.pageNumber > 1 ? { page: first.pageNumber - 1 } : undefined,
   });
@@ -425,6 +380,7 @@ function InfiniteLibrary({ search }) {
     initialOffset: scrollPositions.get(key) || 0,
   });
   const rows = virtual.getVirtualItems(),
+    lastRowIndex = rows.at(-1)?.index,
     startPage = result.data?.pages[0]?.pageNumber;
   const previousStart = useRef(startPage);
   const restored = useRef(false);
@@ -437,23 +393,19 @@ function InfiniteLibrary({ search }) {
     setRefreshCount((count) => count + 1);
   }
   useEffect(() => {
-    if (result.error?.code === "cursor_stale") refresh();
+    if (result.error instanceof APIError && result.error.code === "cursor_stale") refresh();
   }, [result.error]);
   useEffect(() => {
     if (refreshCount)
-      client.resetQueries({
+      void client.resetQueries({
         queryKey: ["works-infinite", JSON.parse(key)],
         exact: true,
       });
   }, [client, key, refreshCount]);
   useLayoutEffect(() => {
     if (!restored.current && startPage && container.current) {
-      const capacity = Math.max(
-        1,
-        Math.floor(container.current.clientWidth / 180),
-      );
-      const actualColumns =
-        capacity >= 5 ? 5 : capacity >= 4 ? 4 : capacity >= 2 ? 2 : 1;
+      const capacity = Math.max(1, Math.floor(container.current.clientWidth / 180));
+      const actualColumns = capacity >= 5 ? 5 : capacity >= 4 ? 4 : capacity >= 2 ? 2 : 1;
       if (columns !== actualColumns) {
         setColumns(actualColumns);
         return;
@@ -461,24 +413,21 @@ function InfiniteLibrary({ search }) {
       const resume = infiniteResume.get(key);
       if (resume)
         container.current.scrollTop =
-          (resume.page - startPage) * Math.ceil(search.limit / columns) * 312 +
-          resume.offset;
+          (resume.page - startPage) * Math.ceil(search.limit / columns) * 312 + resume.offset;
       restored.current = true;
     }
   }, [startPage, columns, key, search.limit]);
-  function saveScroll(event) {
+  function saveScroll(event: UIEvent<HTMLDivElement>) {
     const top = event.currentTarget.scrollTop,
       pageHeight = Math.ceil(search.limit / columns) * 312;
     scrollPositions.set(key, top);
-    if (scrollPositions.size > 64)
-      scrollPositions.delete(scrollPositions.keys().next().value);
+    if (scrollPositions.size > 64) scrollPositions.delete(scrollPositions.keys().next().value!);
     if (startPage)
       infiniteResume.set(key, {
         page: startPage + Math.floor(top / pageHeight),
         offset: top % pageHeight,
       });
-    if (infiniteResume.size > 64)
-      infiniteResume.delete(infiniteResume.keys().next().value);
+    if (infiniteResume.size > 64) infiniteResume.delete(infiniteResume.keys().next().value!);
   }
   useLayoutEffect(() => {
     if (
@@ -488,18 +437,13 @@ function InfiniteLibrary({ search }) {
       container.current
     ) {
       container.current.scrollTop +=
-        (previousStart.current - startPage) *
-        Math.ceil(search.limit / columns) *
-        312;
+        (previousStart.current - startPage) * Math.ceil(search.limit / columns) * 312;
     }
     previousStart.current = startPage;
   }, [startPage, columns, search.limit]);
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
-      const capacity = Math.max(
-        1,
-        Math.floor(entries[0].contentRect.width / 180),
-      );
+      const capacity = Math.max(1, Math.floor(entries[0]!.contentRect.width / 180));
       setColumns(capacity >= 5 ? 5 : capacity >= 4 ? 4 : capacity >= 2 ? 2 : 1);
     });
     if (container.current) observer.observe(container.current);
@@ -507,26 +451,19 @@ function InfiniteLibrary({ search }) {
   }, []);
   useEffect(() => {
     if (
-      rows.at(-1)?.index >= Math.ceil(items.length / columns) - 2 &&
+      (lastRowIndex ?? -Infinity) >= Math.ceil(items.length / columns) - 2 &&
       result.hasNextPage &&
       !result.isFetching &&
       !result.error
     )
-      result.fetchNextPage();
-  }, [
-    rows.at(-1)?.index,
-    items.length,
-    columns,
-    result.hasNextPage,
-    result.isFetching,
-    result.error,
-  ]);
+      void result.fetchNextPage();
+  }, [lastRowIndex, items.length, columns, result.hasNextPage, result.isFetching, result.error]);
   return (
     <>
       <ErrorNotice error={result.error} />
       <div className="results-count">
-        {result.data?.pages[0]?.total.toLocaleString() ?? "…"} works · up to
-        five result pages retained
+        {result.data?.pages[0]?.total.toLocaleString() ?? "…"} works · up to five result pages
+        retained
       </div>
       <div className="toolbar">
         <button
@@ -543,7 +480,7 @@ function InfiniteLibrary({ search }) {
         className="infinite-list"
         ref={container}
         onScroll={saveScroll}
-        tabIndex="0"
+        tabIndex={0}
         aria-label="Scrollable library results"
       >
         <div style={{ height: virtual.getTotalSize(), position: "relative" }}>
@@ -556,11 +493,9 @@ function InfiniteLibrary({ search }) {
                 gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
               }}
             >
-              {items
-                .slice(row.index * columns, (row.index + 1) * columns)
-                .map((work) => (
-                  <Card key={work.id} work={work} search={search} />
-                ))}
+              {items.slice(row.index * columns, (row.index + 1) * columns).map((work) => (
+                <Card key={work.id} work={work} search={search} />
+              ))}
             </div>
           ))}
         </div>
@@ -570,11 +505,7 @@ function InfiniteLibrary({ search }) {
         disabled={!result.hasNextPage || result.isFetching}
         onClick={() => result.fetchNextPage()}
       >
-        {result.isFetching
-          ? "Loading…"
-          : result.hasNextPage
-            ? "Load more"
-            : "End of results"}
+        {result.isFetching ? "Loading…" : result.hasNextPage ? "Load more" : "End of results"}
       </button>
     </>
   );

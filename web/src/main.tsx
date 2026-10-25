@@ -1,3 +1,5 @@
+import type { LibrarySearch } from "./types.ts";
+import type { SearchSchemaInput } from "@tanstack/react-router";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,10 +12,10 @@ import {
   Link,
   useRouterState,
 } from "@tanstack/react-router";
-import { Auth, useAuth, ErrorNotice } from "./api.jsx";
-import Library from "./library.jsx";
-import Reader from "./reader.jsx";
-import Admin from "./admin.jsx";
+import { Auth, useAuth, ErrorNotice, APIError } from "./api.tsx";
+import Library from "./library.tsx";
+import Reader from "./reader.tsx";
+import Admin from "./admin.tsx";
 import "./style.css";
 
 const queryClient = new QueryClient({
@@ -21,14 +23,14 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       gcTime: 10 * 60_000,
-      retry: (count, error) => error.status >= 500 && count < 1,
+      retry: (count, error) => error instanceof APIError && error.status >= 500 && count < 1,
       refetchOnWindowFocus: false,
     },
   },
 });
 function Shell() {
   const { user, logout } = useAuth();
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<unknown>(null);
   const reader = useRouterState({
     select: (state) => state.location.pathname.startsWith("/read/"),
   });
@@ -74,22 +76,22 @@ const root = createRootRoute({
     </main>
   ),
 });
-const positive = (value, fallback, max = 1_000_000) =>
+const searchText = (value: unknown) => String(value);
+const positive = (value: unknown, fallback: number, max = 1_000_000) =>
   Math.max(1, Math.min(max, Math.floor(Number(value) || fallback)));
 const library = createRoute({
   getParentRoute: () => root,
   path: "/",
-  validateSearch: (search) => ({
-    q: String(search.q || ""),
-    sort: ["recent", "title", "mtime"].includes(search.sort)
-      ? search.sort
-      : "recent",
+  validateSearch: (search: Partial<Record<keyof LibrarySearch, unknown>> & SearchSchemaInput) => ({
+    q: searchText(search.q || ""),
+    sort:
+      typeof search.sort === "string" && ["recent", "title", "mtime"].includes(search.sort)
+        ? search.sort
+        : "recent",
     direction: search.direction === "asc" ? "asc" : "desc",
     page: positive(search.page, 1),
-    limit: [20, 40, 80, 100].includes(Number(search.limit))
-      ? Number(search.limit)
-      : 40,
-    root: String(search.root || ""),
+    limit: [20, 40, 80, 100].includes(Number(search.limit)) ? Number(search.limit) : 40,
+    root: searchText(search.root || ""),
     view: search.view === "infinite" ? "infinite" : "pages",
   }),
   component: Library,
@@ -97,7 +99,7 @@ const library = createRoute({
 const reader = createRoute({
   getParentRoute: () => root,
   path: "/read/$workId",
-  validateSearch: (search) => ({
+  validateSearch: (search: { page?: unknown; immersive?: unknown } & SearchSchemaInput) => ({
     page: positive(search.page, 1),
     immersive: search.immersive === true || search.immersive === "true",
   }),
@@ -106,18 +108,12 @@ const reader = createRoute({
 const admin = createRoute({
   getParentRoute: () => root,
   path: "/admin",
-  validateSearch: (search) => ({
-    tab: [
-      "roots",
-      "users",
-      "jobs",
-      "offline",
-      "providers",
-      "plugins",
-      "audit",
-    ].includes(search.tab)
-      ? search.tab
-      : "roots",
+  validateSearch: (search: { tab?: unknown } & SearchSchemaInput) => ({
+    tab:
+      typeof search.tab === "string" &&
+      ["roots", "users", "jobs", "offline", "providers", "plugins", "audit"].includes(search.tab)
+        ? search.tab
+        : "roots",
   }),
   component: Admin,
 });
@@ -125,7 +121,14 @@ const router = createRouter({
   routeTree: root.addChildren([library, reader, admin]),
   defaultPreload: false,
 });
-createRoot(document.getElementById("root")).render(
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
+const container = document.getElementById("root");
+if (!container) throw new Error("Root element missing");
+createRoot(container).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
