@@ -34,7 +34,7 @@ export async function pageBlob(workId, page, width, signal, forcePNG = false) {
   if (format) params.set("format", format);
   if (width) params.set("width", String(width));
   const response = await fetch(
-    `/api/works/${encodeURIComponent(workId)}/pages/${page.ordinal}${params.size ? `?${params}` : ""}`,
+    `/api/works/${encodeURIComponent(workId)}/pages/${page.ordinal}${params.toString() ? `?${params}` : ""}`,
     { signal, credentials: "same-origin" },
   );
   if (!response.ok) {

@@ -4,6 +4,7 @@ import {
   visiblePages,
   navigatePage,
   keyAction,
+  ignoresKeys,
   gestureAction,
 } from "./navigation.mjs";
 const portrait = { width: 600, height: 900 },
@@ -29,11 +30,46 @@ test("slow dimensions never skip and known shown boundary stays stable", () => {
   assert.equal(navigatePage(pages, 0, "next", "spread", shown), 1);
   assert.deepEqual(visiblePages(pages, 2, "spread"), [2]);
 });
-test("keys respect focus and native continuous scrolling", () => {
-  assert.equal(
-    keyAction({ key: "ArrowRight", target: { closest: () => ({}) } }),
-    null,
-  );
+function focus(tag, type, isContentEditable = false) {
+  const target = {
+    type,
+    isContentEditable,
+    closest: (selector) => selector.split(", ").includes(tag) ? target : null,
+  };
+  return target;
+}
+test("keys ignore text entry and arrow-driven inputs but work from buttons, links and dialogs", () => {
+  for (const target of [
+    focus("input", "text"),
+    focus("input", "number"),
+    focus("input", "password"),
+    focus("input", "radio"),
+    focus("input", "range"),
+    focus("textarea"),
+    focus("select"),
+    focus("span", undefined, true),
+  ]) {
+    assert.equal(ignoresKeys(target), true);
+    assert.equal(keyAction({ key: "ArrowRight", target }), null);
+  }
+  for (const target of [
+    focus("button"),
+    focus("a"),
+    focus("dialog"),
+    focus('[role="dialog"]'),
+    focus('[role="button"]'),
+    ...["button", "submit", "reset", "image", "checkbox"].map(
+      (type) => focus("input", type),
+    ),
+  ]) {
+    assert.equal(ignoresKeys(target), false);
+    assert.equal(keyAction({ key: "ArrowRight", target }), "next");
+    assert.equal(keyAction({ key: "ArrowLeft", target }), "previous");
+    assert.equal(keyAction({ key: " ", target }), null);
+    assert.equal(keyAction({ key: "Enter", target }), null);
+  }
+});
+test("keys respect modifiers and native continuous scrolling", () => {
   assert.equal(keyAction({ key: "ArrowRight" }), "next");
   assert.equal(keyAction({ key: "PageDown" }, "scroll"), null);
   assert.equal(keyAction({ key: "ArrowRight", ctrlKey: true }), null);

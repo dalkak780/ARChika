@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   api,
@@ -30,6 +30,7 @@ function workPath(search, page, cursor) {
 }
 function Card({ work, search }) {
   const action = useAction();
+  const client = useQueryClient();
   const thumbnailKey = `${work.id}:${work.version}`;
   const [failed, setFailed] = useState(() =>
     failedThumbnails.has(thumbnailKey),
@@ -88,11 +89,36 @@ function Card({ work, search }) {
         aria-pressed={work.favorite}
         disabled={action.isPending}
         onClick={() =>
-          action.mutate({
-            path: `/works/${encoded(work.id)}/favorite`,
-            method: "PUT",
-            body: { favorite: !work.favorite },
-          })
+          action.mutate(
+            {
+              path: `/works/${encoded(work.id)}/favorite`,
+              method: "PUT",
+              body: { favorite: !work.favorite },
+              invalidate: [],
+            },
+            {
+              onSuccess: (_, variables) => {
+                const updatePage = (page) => ({
+                  ...page,
+                  items: page.items.map((item) =>
+                    item.id === work.id
+                      ? { ...item, favorite: variables.body.favorite }
+                      : item,
+                  ),
+                });
+                client.setQueriesData({ queryKey: ["works"] }, (data) =>
+                  data ? updatePage(data) : data,
+                );
+                client.setQueriesData(
+                  { queryKey: ["works-infinite"] },
+                  (data) =>
+                    data
+                      ? { ...data, pages: data.pages.map(updatePage) }
+                      : data,
+                );
+              },
+            },
+          )
         }
       >
         {work.favorite ? "★" : "☆"}
@@ -366,12 +392,16 @@ function PagedLibrary({ search, update }) {
   );
 }
 function InfiniteLibrary({ search }) {
+  const client = useQueryClient();
   const container = useRef(null),
     [columns, setColumns] = useState(4),
+    [refreshCount, setRefreshCount] = useState(0),
     key = JSON.stringify(search);
   const result = useInfiniteQuery({
     queryKey: ["works-infinite", search],
-    initialPageParam: { page: infiniteResume.get(key)?.page || search.page },
+    initialPageParam: {
+      page: refreshCount ? 1 : infiniteResume.get(key)?.page || search.page,
+    },
     maxPages: 5,
     queryFn: async ({ pageParam, signal }) => ({
       ...(await api(workPath(search, pageParam.page, pageParam.cursor), {
@@ -398,6 +428,24 @@ function InfiniteLibrary({ search }) {
     startPage = result.data?.pages[0]?.pageNumber;
   const previousStart = useRef(startPage);
   const restored = useRef(false);
+  function refresh() {
+    infiniteResume.delete(key);
+    scrollPositions.delete(key);
+    previousStart.current = undefined;
+    restored.current = true;
+    if (container.current) container.current.scrollTop = 0;
+    setRefreshCount((count) => count + 1);
+  }
+  useEffect(() => {
+    if (result.error?.code === "cursor_stale") refresh();
+  }, [result.error]);
+  useEffect(() => {
+    if (refreshCount)
+      client.resetQueries({
+        queryKey: ["works-infinite", JSON.parse(key)],
+        exact: true,
+      });
+  }, [client, key, refreshCount]);
   useLayoutEffect(() => {
     if (!restored.current && startPage && container.current) {
       const capacity = Math.max(
@@ -487,7 +535,7 @@ function InfiniteLibrary({ search }) {
         >
           Load earlier results
         </button>
-        <button disabled={result.isFetching} onClick={() => result.refetch()}>
+        <button disabled={result.isFetching} onClick={refresh}>
           Refresh results
         </button>
       </div>

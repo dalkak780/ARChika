@@ -2,37 +2,13 @@
 
 [![CI](https://github.com/dalkak780/ARChika/actions/workflows/ci.yml/badge.svg)](https://github.com/dalkak780/ARChika/actions/workflows/ci.yml) [![Docker](https://github.com/dalkak780/ARChika/actions/workflows/docker.yml/badge.svg)](https://github.com/dalkak780/ARChika/actions/workflows/docker.yml)
 
-A lightweight, self-hosted archive gallery and reader. One Go `net/http` process serves an embedded React/Vite SPA; production does not need Node.js, Redis, Perl, or an external database.
+ARChika is a self-hosted gallery and reader for comic and image archives. A single Go binary serves the API and an embedded React UI, and keeps its catalog in SQLite. You don't need Node.js, Redis or a separate database in production.
 
-Implementation follows the latest decisions in [SPEC.md](SPEC.md), not superseded discussion paragraphs. This is a fresh SQLite catalog, not a LANraragi database/API migration.
+It reads ZIP/CBZ, RAR/CBR, 7z/CB7 and plain image folders in place and never modifies your files. ARChika starts with its own fresh catalog; it does not import a LANraragi database or offer a LANraragi-compatible API.
 
-## Build and first account
+## Quick start with Docker
 
-Requirements: Go 1.25.1 or newer, Node.js 24 and pnpm 12 for the frontend build. Linux is the production target; macOS supports local development. The container builds the existing govips/libvips implementation. An ordinary Go build uses the pure-Go image implementation: raw AVIF/JXL delivery still works, but AVIF/JXL transformations require the native container build.
-
-```sh
-make build
-cp archika.example.yaml archika.yaml
-```
-
-Edit the example's paths for the host when running outside Docker. `allowed_paths` is the administrator-controlled registration boundary; the UI cannot register arbitrary paths or mount host directories. Configuration accepts JSON or YAML. There is no environment interpolation inside the configuration file.
-
-Create the first administrator **before** starting the service. Supply the password on stdin rather than command-line arguments; there is no default password or public registration.
-
-```sh
-read -rs ARCHIKA_INITIAL_PASSWORD
-printf '%s\n' "$ARCHIKA_INITIAL_PASSWORD" | bin/archika admin --config archika.yaml --name admin
-unset ARCHIKA_INITIAL_PASSWORD
-bin/archika serve --config archika.yaml
-```
-
-The setup command refuses an existing account database. Subsequent account creation, disabling, password reset and root grants are administrator operations in the UI. New non-admin accounts have no grants. Passwords use salted Argon2id; sessions are server-side, with HttpOnly/SameSite cookies and CSRF tokens. Use HTTPS at a reverse proxy and set `secure_cookies: true` for HTTPS deployments. The proxy must preserve the external Host header.
-
-Open the Library, then **Administration → Jobs → Discover / scan**. Root registration and normal restart do not start discovery. An empty catalog before this explicit operation is intentional.
-
-## Docker
-
-Provision data/cache/plugin directories under the service UID/GID. Do not use root as the service identity, and do not recursively change ownership of existing libraries or caches. Keep SQLite data on a local filesystem suitable for SQLite WAL, not an unreliable network database mount.
+Create the data, cache and plugin directories as the user that will run the service (not root):
 
 ```sh
 cp archika.example.yaml archika.yaml
@@ -41,38 +17,81 @@ export PUID="$(id -u)" PGID="$(id -g)"
 export LIBRARY_PATH=/absolute/path/to/library
 export DATA_PATH="$PWD/data" CACHE_PATH="$PWD/cache"
 docker compose build
+```
+
+Create the first administrator before starting the service. There is no default password and no public sign-up, and the password is read from stdin so it doesn't end up in your shell history:
+
+```sh
 read -rs ARCHIKA_INITIAL_PASSWORD
 printf '%s\n' "$ARCHIKA_INITIAL_PASSWORD" | docker compose run --rm -T archika admin --name admin
 unset ARCHIKA_INITIAL_PASSWORD
 docker compose up -d
 ```
 
-Prebuilt multi-architecture images (`linux/amd64`, `linux/arm64`) are published to `ghcr.io/dalkak780/archika`: `main` tracks the default branch, `latest` and `X.Y.Z` track release tags. To use one instead of building locally, set `image: ghcr.io/dalkak780/archika:latest` in `compose.yaml`, remove `build: .`, and replace `docker compose build` with `docker compose pull`.
+Then open the UI and run **Administration → Jobs → Discover / scan**. ARChika never scans on its own at startup or when you add a root, so the library stays empty until you run this.
 
-Compose binds the HTTP port to loopback, drops capabilities, uses a read-only container filesystem, mounts originals and plugin executables read-only, and supplies separate persistent data, temporary page-cache and bounded `/tmp` storage. Configure the reverse proxy or intentionally adjust the port binding for a trusted network. Add additional read-only mounts and matching `allowed_paths` entries for additional roots.
+### Prebuilt images
 
-The application creates only its own known data/cache directories and new files. It never runs recursive `chown`, `chmod`, permission walks or automatic repairs. An exclusive directory lock prevents two live services sharing a database or temporary cache generation.
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published to `ghcr.io/dalkak780/archika`:
 
-`GET /healthz` reports HTTP readiness without checking every library file. Readiness does not wait for background jobs.
+- `main`: latest commit on the default branch
+- `latest`, `X.Y.Z`, `X.Y`: release tags
 
-## Catalog, identity and indexing
+To use one, set `image: ghcr.io/dalkak780/archika:latest` in `compose.yaml`, remove `build: .`, and run `docker compose pull` instead of `docker compose build`.
 
-- One ZIP/CBZ, RAR/CBR or 7z/CB7 is one work. An image-bearing leaf directory is a gallery. Parent directories organize works. Direct images in non-leaf folders are reported during explicit discovery rather than inventing nested galleries.
-- Display titles preserve the original basename, removing only a recognized archive extension. The optional per-root RE2 filename parser produces tags, never replacement titles. LANraragi-derived fixture behavior covers creators/groups, events, series, language and trailing captures.
-- Discovery records paths, lightweight observations and searchable names first. Separate stable-file and page-list tasks build manifests; neither stage extracts full images or creates thumbnails. Quiet periods are configurable. Clicking a stable, unindexed work promotes only that work.
-- Persistent IDs, registration times, page manifests, provenance and cover selection survive restart. Reliable local filesystem identity shares a physical source across aliases; different physical copies are not merged. Birth identity is used where available. Unreliable filesystem identities fall back to separate records. A replaced hard-link alias can split from the still-live old physical source rather than blending two files.
-- Aliases retain independent root authorization. Canonical names are selected by persistent root-ID order, then relative path, among the requesting user's accessible online aliases. Hidden aliases do not contribute filename/path/tag matches.
-- Symlinks must stay inside the same registered root. Read-time traversal uses Go's descriptor-relative `os.Root`; originals are revalidated before cache delivery. Nested archives are non-page assets.
-- Missing originals remain indexed, but disappear from normal browsing. Administrator views expose offline records and preview-before-cleanup. Cleanup rechecks absence and never deletes original files. A reachable empty mountpoint is not automatically treated as an intentionally deleted library: bounded known-source probes can mark a root unavailable and require mount verification. Restore the mount, or use the existing explicit reconciliation/force-approval controls after verifying it. Removing an intentionally retired root is a separate previewed operation.
-- Root relocation uses a bounded sample. Inconclusive targets stay pending. Explicit force approval keeps IDs/indexes and records an audit warning; observed source mismatches trigger targeted reindexing, not a root sweep.
+### What the compose file sets up
 
-Watchers are opt-in per root. Explicit scans persist their directory/name worklists; they do not rely on filesystem enumeration order. Watch registration uses only configured roots and previously discovered directories, asynchronously after readiness. OS watch limits, overflow, network filesystems and downtime still require deliberate reconciliation. No watcher implementation can guarantee missed events did not occur. Failed directory traversal does not turn unseen records into deletion evidence.
+- The HTTP port is bound to `127.0.0.1`. Put a reverse proxy with HTTPS in front, or change the binding if the network is trusted.
+- The container runs read-only with all capabilities dropped and `no-new-privileges`.
+- The library and plugin directories are mounted read-only. Data, cache and `/tmp` are separate writable mounts.
+- To add more libraries, add another read-only mount and a matching entry in `allowed_paths`.
 
-## Search and browsing
+Keep the SQLite data directory on a local filesystem; WAL mode doesn't work reliably on network mounts. Don't share a cache directory between two instances (a directory lock refuses to start the second one). ARChika never runs `chown` or `chmod` on existing directories, so set ownership yourself.
 
-SQLite WAL holds catalog state and complementary FTS5 `unicode61`/`trigram` indexes. Text normalization is derived; original titles and paths remain unchanged. Search never opens archives or walks roots.
+`GET /healthz` returns as soon as the HTTP server is ready. It doesn't wait for background jobs or check library files.
 
-Examples:
+## Building from source
+
+Requirements: Go 1.25.1+, Node.js 24 and pnpm 12. Linux is the production target; macOS works for development.
+
+```sh
+make build
+cp archika.example.yaml archika.yaml
+read -rs ARCHIKA_INITIAL_PASSWORD
+printf '%s\n' "$ARCHIKA_INITIAL_PASSWORD" | bin/archika admin --config archika.yaml --name admin
+unset ARCHIKA_INITIAL_PASSWORD
+bin/archika serve --config archika.yaml
+```
+
+A plain `go build` uses a pure-Go image backend. AVIF and JXL pages are still served as-is, but resizing or converting them needs the libvips build used by the container image (`-tags vips`).
+
+## Configuration
+
+Configuration is JSON or YAML; see [`archika.example.yaml`](archika.example.yaml). Environment variables are not expanded inside the file.
+
+`allowed_paths` is the set of directories an administrator may register as library roots. The UI can't register paths outside it.
+
+For HTTPS deployments, set `secure_cookies: true` and make sure the reverse proxy forwards the original `Host` header.
+
+### Accounts
+
+Administrators create accounts, disable them, reset passwords and grant access to individual roots from the UI. New non-admin accounts can't see any root until they are granted one. Passwords are hashed with Argon2id. Sessions are stored server-side and use HttpOnly, SameSite cookies with CSRF tokens.
+
+## Library and indexing
+
+- Each archive file is one work. A folder that contains images and no subfolders is a gallery. Other folders are only used for organization.
+- Titles are the original file or folder name without the archive extension. An optional per-root RE2 pattern can extract tags (artist, group, event, series, language, ...) from filenames; it never changes the title.
+- Discovery only records paths and file metadata. Page lists are built later in the background, or immediately when you open a work that hasn't been indexed yet. Thumbnails are generated on first view.
+- Work IDs, page lists and cover choices survive restarts. Where the filesystem provides a reliable file identity, hard links and bind-mounted copies of the same file are tracked as one work with several paths.
+- Symlinks are followed only when they stay inside the same root.
+- Missing files stay in the catalog but are hidden from browsing. Administrators can review and clean up offline records; cleanup never deletes files on disk. If a mountpoint suddenly looks empty, ARChika probes a few known files and can mark the root unavailable instead of treating every work as deleted.
+- When you change a root's path, ARChika checks a sample of files at the new location before switching. If the check fails, the change waits for your confirmation.
+
+Filesystem watching is opt-in per root. Watches are installed only on directories found by a previous scan. If the OS watch limit is reached, the watcher overflows, the library is on a network filesystem, or the service was down, run a scan to catch up.
+
+## Search
+
+The catalog uses SQLite FTS5 with `unicode61` and `trigram` indexes. Search queries only the database; it never opens archives or walks the filesystem.
 
 ```text
 artist:someone AND (language:korean OR language:japanese)
@@ -82,93 +101,119 @@ word:collection OR tag:series:example
 favorite:true
 ```
 
-Boolean precedence is NOT → AND → OR; adjacency means AND. Quotes preserve phrases and literal operator names. One/two-codepoint terms use indexed token-prefix/exact semantics, not arbitrary substring scans. Longer terms use trigram substring matching by default; `word:`, `prefix:`, `exact:`, `title:`, `path:`, `root:` and exact namespaced tags are available. This is not CJK morphological analysis or transliteration.
+- Operator precedence is `NOT`, then `AND`, then `OR`. Terms next to each other are combined with `AND`. Use quotes for phrases or to search for a literal `AND`/`OR`/`NOT`.
+- Terms of three or more characters match anywhere in a word. One- and two-character terms match the start of words.
+- Field prefixes: `word:`, `prefix:`, `exact:`, `title:`, `path:`, `root:`, `substring:`, and namespaced tags such as `artist:` or `tag:series:`.
+- There is no CJK morphological analysis or transliteration.
 
-Both numbered pagination and virtualized infinite scrolling use the same ACL/offline predicates and stable tie-breakers. Default order is immutable `registered_at DESC, archive_id DESC`; alternatives include natural title and stored filesystem modification time. Cursor traversal can request a refresh after catalog changes. Page sizes are bounded and arbitrary jumps beyond page 10000 are rejected in favor of cursor navigation. Saved searches and favorites belong to the account.
+Results can be browsed with page numbers or infinite scroll. The default order is newest first; you can also sort by title (natural order) or file modification time. Page numbers above 10000 are rejected; use scrolling instead. Saved searches and favorites are per account.
 
-## Reader and cache policy
+## Reader
 
-The reader supports single pages, optional portrait-facing spreads, continuous virtualization, keyboard/pointer/touch navigation, fit/zoom and explicit resize. Wide pages stay whole. Unknown dimensions do not skip pages. Browser-native image representations retain original encoded bytes and animation. AVIF/WebP/JXL capability probes request an explicit PNG compatibility variant only when needed; unavailable decoders return a page-scoped error. A still-frame compatibility result is labeled rather than presented as animation-equivalent.
+- Single page, two-page spread for portrait pages, or continuous scroll.
+- Keyboard, mouse and touch navigation; fit modes, zoom and resize.
+- Pages are sent as the original bytes when the browser can display them, so animated images keep their animation. When the browser can't decode AVIF, WebP or JXL, ARChika sends a PNG instead, and marks it as a still frame if the original was animated.
+- Immersive mode adds one history entry: Back leaves immersive mode on the same page, and Back again returns to the library with your filters and scroll position. Browser fullscreen is a separate toggle.
+- ARChika doesn't keep a reading history.
 
-Immersive creates exactly one router history entry. First Back exits Immersive at the same page; second Back returns to the originating library filters/page/scroll. Page navigation replaces URL state. Browser fullscreen is separate and optional. No persistent reading-history feature is added.
+Archive formats are handled behind the [`archive.Adapter`](internal/archive/archive.go) interface. ZIP, RAR and 7z are read by a small pool of helper processes, and the next pages are read ahead based on how fast you're reading.
 
-All ZIP/RAR/7z/gallery dependencies are behind [`archive.Adapter`](internal/archive/archive.go): `List`, persisted-entry `Open`, `Close`, explicit cost/solid/session capabilities and optional sequential read-ahead. HTTP code does not call decoder dependencies directly. ZIP/RAR/7z sessions live in a small bounded pool of isolated helpers; gallery access uses the same read-only interface. Session reuse does not mean fresh decoder opens can avoid all format headers, especially solid RAR.
+### Resource defaults
 
-Defaults (see `archika.example.yaml`):
+All of these can be changed in the config file.
 
-| Budget | Default |
+| Setting | Default |
 |---|---:|
-| Encoded full-resolution RAM cache | 64 MiB |
-| Ephemeral decoded-entry disk cache | 1 GiB |
-| Maximum encoded page bytes | 64 MiB |
-| Archive/decompression concurrency | 2 |
-| Active archive sessions | workers + 2 |
-| Simultaneous image transforms | 1 |
-| Image transformation pixel limit | 64 million |
-| Speculative page count | adaptive, at most 12 |
-| Speculative bytes per navigation | at most 16 MiB |
-| Thumbnail bounding box | 320 × 480 |
-| Archive entry count | 100000 |
-| Helper wall limit per operation | 30 seconds |
+| In-memory page cache | 64 MiB |
+| Disk page cache | 1 GiB |
+| Maximum page size | 64 MiB |
+| Archive decompression workers | 2 |
+| Open archive sessions | workers + 2 |
+| Concurrent image transforms | 1 |
+| Maximum pixels per transform | 64 million |
+| Pages read ahead | up to 12 (adaptive) |
+| Read-ahead bytes per page turn | up to 16 MiB |
+| Thumbnail size | 320 × 480 |
+| Maximum entries per archive | 100000 |
+| Helper time limit per operation | 30 s |
 
-RAM/disk admission and eviction are byte-budgeted; large items do not evict an entire RAM hot set. Cheap ZIP pages do not automatically populate the disk tier. Concurrent work coalesces by source version/entry/representation. Navigation promotes viewing work, predicts forward pages from speed and measured access cost, incorporates cache pressure, and cancels obsolete speculation. Original delivery is not image decoding; archive decompression and optional image transformation have separate budgets.
+Thumbnails are stored permanently and regenerated only when the source or cover changes. A thumbnail that can't be generated (for example, an unsupported format) is marked as failed until the file changes or an administrator retries it. The disk page cache is temporary and is cleaned up in the background.
 
-Persistent thumbnails are lazy, versioned and separate from ephemeral full-resolution bytes. Cover changes affect only the selected work's thumbnail. Unsupported transformations record a stable failure until source change or explicit retry. Optional warm-up is an explicit administrator job. Temporary generations are reclaimed asynchronously under a bounded deletion cadence; startup does not validate a full temporary cache tree or thumbnail tree. Do not share a cache directory between services.
+On Linux, each archive or image helper is limited to 768 MiB of data, 2 GiB of address space and 120 CPU seconds. Total memory use is higher than the cache size: SQLite, active responses and decoders also use memory, so set a container memory limit accordingly. On macOS, helpers run in separate processes with timeouts but without the memory cap.
 
-Linux archive/image helpers have 768 MiB data-space, 2 GiB virtual-address-space and 120 CPU-second process ceilings, plus request cancellation/timeouts. These ceilings are not a promise that total container RSS equals the RAM-cache setting: active responses, SQLite, decoder dictionaries, native bitmaps and helpers also consume memory. macOS development has process/time isolation but does not provide the Linux hard data-space cap. Originals remain immutable in every case.
+## Background jobs
 
-## Jobs and restart
+Scans, indexing, metadata fetching and thumbnail warm-up run as jobs that you can pause, resume, retry and cancel from the UI. Each job shows its progress and failed items.
 
-Durable jobs expose progress, failures, pause/resume/retry/cancel and audit records. Lightweight accepted incremental/stability work and bounded automatic crawls can resume after a crash. Full discovery/reconciliation, initial bulk page indexing, metadata backfill, parser reparse and thumbnail warm-up pause after restart. Resume explicitly; restart never invents a new full scan, crawl or thumbnail job.
+After a restart, small incremental jobs resume automatically. Large jobs (full scans, bulk indexing, metadata backfill, re-parsing filenames, thumbnail warm-up) stay paused until you resume them. Pausing all jobs globally doesn't affect the web UI.
 
-Global pause stops background execution without blocking HTTP. Lifting global pause does not authorize previously paused-restart bulk work. For an interrupted initial import, resume discovery and explicitly resume/index the remaining page-list scope. On-demand reading never resumes an entire import. Checkpoints and item failures support explicit retry; previous failure counters remain visible. Original files are never repaired, repacked, converted or removed.
+## Metadata
 
-## Metadata providers and secrets
+Built-in providers: E-Hentai/ExHentai, nHentai (API v2), Chaika.moe and local JSON files. Matching follows the logic of the LANraragi and Ougi plugins.
 
-Built-ins: E-Hentai/ExHentai, nHentai API v2, Chaika.moe and local JSON. Matching behavior is based on the maintained LANraragi/Ougi sources; they are references, not a Perl runtime or migration layer. Title-only similarity produces review candidates. Confirmed source links and verified provider-specific IDs may link automatically. Provider refresh does not replace filename display titles or invalidate page indexes.
+- A match on title alone is shown as a candidate for you to confirm. Matches on a source URL or provider ID are linked automatically.
+- Manual edits always win, then providers in your configured priority order, then values from the filename. Fetching metadata never changes the displayed title.
+- A failed fetch keeps the previous metadata. Up to three past results per work and provider are kept, with sensitive fields removed.
 
-Effective fields honor explicit manual values/clearing, then configurable provider priority, then filename defaults. Provider snapshots, source membership and manual tag additions/exclusions are retained transactionally with FTS updates. Failed fetches preserve successful metadata. Raw payloads are redacted and bounded to 1 MiB, retaining up to three historical results per work/provider.
+Automatic metadata fetching is off by default. When you enable it for a root, it runs only for works added from then on, not for the existing library.
 
-The default crawler resolver is Cloudflare's DNS-JSON DoH endpoint. Configurable Cloudflare/Google-compatible HTTPS DNS-JSON endpoints and explicit `dns_mode: system` are supported. `proxy_url` accepts an HTTP(S) CONNECT proxy. Destination resolution still follows the selected DNS policy; CONNECT is pinned to checked public IPs while TLS SNI/hostname validation uses the original hostname. Redirects are checked, cross-origin credentials stripped, bodies capped and requests/retries throttled. Proxy endpoint bootstrapping uses the system resolver. DoH does not solve IP/SNI/site blocks, and no silent system-DNS fallback is used.
+### Network
 
-To persist provider credentials, generate a separate encryption key and supply it outside SQLite:
+By default, provider hostnames are resolved through Cloudflare DNS over HTTPS. You can configure another DNS-JSON endpoint or use `dns_mode: system`. ARChika never falls back to system DNS silently. `proxy_url` accepts an HTTP(S) CONNECT proxy. Requests only go to public IP addresses, redirects are checked, and credentials are not sent across origins.
+
+### Provider credentials
+
+Credentials are encrypted with AES-GCM using a key that you keep outside the database:
 
 ```sh
 bin/archika keygen
-# Supply the generated value through ARCHIKA_MASTER_KEY / your secret manager.
+# Pass the value as ARCHIKA_MASTER_KEY, or through your secret manager.
 ```
 
-Admin UI accepts provider-specific credential JSON, for example `{"cookie":"..."}` or `{"token":"..."}`. Credentials are AES-GCM encrypted; values are never returned by management APIs. Do not put credentials in provider configuration, filenames, tags or local JSON. Back up the master key separately from the database; losing it requires re-entering credentials. Rotation does not launch library crawls or invalidate unrelated providers.
+Enter credentials as JSON in the admin UI, for example `{"cookie":"..."}` or `{"token":"..."}`. The API never returns them. Back up the master key separately; if you lose it, you have to enter the credentials again.
 
-Local JSON accepts the normalized result shape:
+### Local JSON
 
 ```json
 {"fields":{"title":"Searchable remote title","description":"..."},"tags":["artist:example"],"source_id":"local-record"}
 ```
 
-Import one work in Metadata, or configure the local provider to read `archive.zip.json` / `gallery/metadata.json` under the authorized root. It performs no network access. Automatic crawling is off until explicitly enabled per root and only new work insertions enqueue it; enabling a policy is not a backfill.
+Import a file for one work from the Metadata page, or let the local provider read `archive.zip.json` or `gallery/metadata.json` next to the work. The local provider never uses the network.
 
-## External plugin protocol v1
+## Plugins
 
-Installation registers an administrator-provisioned executable under `plugin_directory`, a manifest and explicit trust confirmation. No remote installer or Go shared-library plugin loader is used. The process starts per invocation and exits afterward. **A subprocess is not a filesystem/network sandbox. Third-party plugins are trusted code.** Use separate OS/container restrictions for untrusted extensions; arbitrary direct sockets bypass the broker policy.
+Plugins are executables that an administrator places in `plugin_directory` and explicitly trusts in the UI. Each lookup starts a new process, which exits when the lookup is done.
 
-Manifest fields: `id`, `name`, `version`, `protocol_version: 1`, `capabilities: ["metadata"]`, exact `hosts`, requested `permissions`, and `config_schema`. The supported configuration-schema subset is object properties of string/boolean/number/integer, required fields, enums, numeric bounds and string length. Unsupported schema keywords are rejected, not silently treated as full JSON Schema. Other capability families can be declared but v1 host execution negotiates metadata only.
+> **Plugins are not sandboxed.** A plugin runs with the same filesystem and network access as ARChika. Only install plugins you trust, or isolate them with OS or container restrictions.
 
-Transport is newline-delimited JSON-RPC 2.0 on stdio, maximum 1 MiB per frame. Host sends `initialize` (ID 1) with protocol/capabilities, then `provider.lookup` (ID 2) with `input`, validated `config` and only that provider's authorized `credentials`. Results are an array of normalized provider results (`source_id`, `source_url`, `fields`, `tags`, `confidence`, `evidence`, `version`, optional `raw`). IDs and negotiated capabilities are checked.
+The manifest declares `id`, `name`, `version`, `protocol_version: 1`, `capabilities: ["metadata"]`, the exact `hosts` it may contact, requested `permissions`, and a `config_schema`. The schema supports object properties of type string, boolean, number and integer, with `required`, `enum`, numeric bounds and string length. Other JSON Schema keywords are rejected. Protocol v1 only runs the `metadata` capability.
 
-A plugin may issue `host.http` requests while lookup is pending: `method` GET/POST, `url`, `body_base64`, and headers. Successful responses contain `body_base64`; policy/transport/budget failures are JSON-RPC errors. Broker responses must fit the frame ceiling. Cancellation sends `$/cancelRequest` best-effort and kills/reaps the process group. Linux plugins have data-space and CPU ceilings without the archive helper's virtual-address reservation restriction, so runtimes with large sparse reservations are not mistaken for large resident allocations. The deployment's memory/PID/tmpfs limits remain important.
+### Protocol v1
 
-## Verification and limits
+Plugins speak newline-delimited JSON-RPC 2.0 over stdin/stdout, with messages up to 1 MiB.
+
+1. The host sends `initialize` (id 1) with the protocol version and capabilities.
+2. The host sends `provider.lookup` (id 2) with `input`, the validated `config`, and only this plugin's `credentials`.
+3. The plugin returns an array of results: `source_id`, `source_url`, `fields`, `tags`, `confidence`, `evidence`, `version`, and optionally `raw`.
+
+While a lookup is running, the plugin can ask the host to make HTTP requests with `host.http` (`method` GET or POST, `url`, `headers`, `body_base64`). The host checks each request against the manifest's `hosts` and returns `body_base64`, or a JSON-RPC error. On cancellation the host sends `$/cancelRequest`, then kills the process group.
+
+On Linux, plugins get data-size and CPU limits. Keep the container's memory, PID and tmpfs limits in place as well.
+
+## Development
 
 ```sh
-make test
-make race
+make test   # Go and frontend tests
+make race   # Go tests with the race detector
+
+# Optional, slower checks
 ARCHIKA_SCALE=100000 go test ./internal/app -run TestSearchScale -v -count=1
 ARCHIKA_NETWORK=1 go test ./internal/app -run TestDoHAndPinnedProxySmoke -v -count=1
 go test ./internal/archive -run '^$' -bench Navigation -benchmem
-docker build --target verification -t archika:verify .
 ```
 
-The verification image contains diagnostic/fixture-generation tools; the runtime image does not. Genuine generated RAR5 image fixtures exercise Unicode paths and the complete 1→2→3→15→14 sequence. Historical RAR4 and malformed/encrypted/solid upstream fixtures retain their attribution. Read-call metrics count source `ReaderAt` calls/bytes, not physical block-device I/O or cold-disk guarantees.
+`docker build --target verification -t archika:verify .` builds an image with extra diagnostic and fixture-generation tools. The regular runtime image doesn't include them.
 
-Original ARChika source code is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE). Third-party components retain their respective licenses and attribution in `THIRD_PARTY_NOTICES.txt` and native package copyright files. Fixture measurements do not establish multi-terabyte production RSS or native mobile-browser behavior.
+## License
+
+ARChika is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE). Third-party components keep their own licenses, listed in [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt).

@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 let csrf = "";
+const authClients = new Set();
 export class APIError extends Error {
   constructor(status, body) {
     super(body?.error?.message || `Request failed (${status})`);
@@ -21,6 +22,10 @@ export async function api(path, { method = "GET", body, signal } = {}) {
   });
   const value =
     response.status === 204 ? null : await response.json().catch(() => null);
+  if (response.status === 401) {
+    csrf = "";
+    for (const client of authClients) client.setQueryData(["me"], null);
+  }
   if (!response.ok) throw new APIError(response.status, value);
   return value;
 }
@@ -43,6 +48,12 @@ export function useAction() {
           ...user,
           preferences: variables.body,
         }));
+      if (variables.invalidate !== undefined)
+        return Promise.all(
+          variables.invalidate.map((queryKey) =>
+            client.invalidateQueries({ queryKey }),
+          ),
+        );
       return client.invalidateQueries({
         predicate: (query) => query.queryKey[0] !== "me",
       });
@@ -70,6 +81,10 @@ export function useAuth() {
 }
 export function Auth({ children }) {
   const client = useQueryClient();
+  useEffect(() => {
+    authClients.add(client);
+    return () => authClients.delete(client);
+  }, [client]);
   const me = useAPI(["me"], "/auth/me", { retry: false, staleTime: 60_000 });
   if (me.isPending)
     return (

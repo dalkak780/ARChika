@@ -10,6 +10,7 @@ import {
   Link,
   getRouteApi,
   useNavigate,
+  useLocation,
   useRouter,
 } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -159,6 +160,7 @@ function PageImage({
 export default function Reader() {
   const { workId } = route.useParams(),
     search = route.useSearch(),
+    searchStr = useLocation({ select: (location) => location.searchStr }),
     navigate = useNavigate({ from: "/read/$workId" }),
     router = useRouter();
   const { user } = useAuth(),
@@ -166,9 +168,15 @@ export default function Reader() {
   const result = useAPI(["work", workId], `/works/${encoded(workId)}`, {
     staleTime: 60_000,
   });
+  const urlPage = new URLSearchParams(searchStr).has("page") ? search.page : null;
   const [index, setIndex] = useState(
-    () => positions.get(workId) ?? search.page - 1,
+    () => (urlPage === null ? positions.get(workId) ?? 0 : urlPage - 1),
   );
+  const [location, setLocation] = useState({ workId, page: urlPage });
+  if (location.workId !== workId || location.page !== urlPage) {
+    setLocation({ workId, page: urlPage });
+    setIndex(urlPage === null ? positions.get(workId) ?? 0 : urlPage - 1);
+  }
   const [mode, setMode] = useState(user.preferences?.reader_mode || "paged"),
     [layout, setLayout] = useState(user.preferences?.layout || "single");
   const [fit, setFit] = useState(user.preferences?.fit || "viewport"),
@@ -181,7 +189,7 @@ export default function Reader() {
   const enteredImmersive = useRef(false),
     surface = useRef(null),
     pointer = useRef(null),
-    lastNavigation = useRef({ time: performance.now(), index: 0 }),
+    lastNavigation = useRef({ time: performance.now(), index }),
     velocity = useRef(0),
     direction = useRef(1);
   const pages = useMemo(
@@ -197,18 +205,21 @@ export default function Reader() {
   const shownRef = useRef(shown);
   shownRef.current = shown;
   useEffect(() => {
-    setIndex(positions.get(workId) ?? search.page - 1);
     setDimensions({});
   }, [workId]);
   useEffect(() => {
+    if (!pages.length) return;
     positions.set(workId, pageIndex);
     if (positions.size > 64) positions.delete(positions.keys().next().value);
-    if (pages.length && search.page !== pageIndex + 1)
+    if (urlPage !== pageIndex + 1)
       navigate({
         search: (old) => ({ ...old, page: pageIndex + 1 }),
         replace: true,
       });
-  }, [workId, pageIndex, pages.length, search.page]);
+  }, [workId, pageIndex, pages.length, urlPage]);
+  useEffect(() => {
+    lastNavigation.current = { time: performance.now(), index: pageIndex };
+  }, [workId, pageIndex]);
   const dimensionsLoaded = useCallback(
     (ordinal, width, height) =>
       setDimensions((old) =>
@@ -224,26 +235,24 @@ export default function Reader() {
         setChrome((value) => !value);
         return;
       }
-      setIndex((current) => {
-        const next = navigatePage(
-          pages,
-          current,
-          action,
-          mode === "scroll" ? "single" : layout,
-          mode === "scroll" ? [current] : shownRef.current,
-        );
-        const now = performance.now();
-        direction.current = next >= current ? 1 : -1;
-        velocity.current = Math.min(
-          20,
-          Math.abs(next - lastNavigation.current.index) /
-            Math.max(0.1, (now - lastNavigation.current.time) / 1000),
-        );
-        lastNavigation.current = { time: now, index: next };
-        return next;
-      });
+      const next = navigatePage(
+        pages,
+        pageIndex,
+        action,
+        mode === "scroll" ? "single" : layout,
+        mode === "scroll" ? [pageIndex] : shownRef.current,
+      );
+      const now = performance.now();
+      direction.current = next >= pageIndex ? 1 : -1;
+      velocity.current = Math.min(
+        20,
+        Math.abs(next - lastNavigation.current.index) /
+          Math.max(0.1, (now - lastNavigation.current.time) / 1000),
+      );
+      lastNavigation.current = { time: now, index: next };
+      setIndex(next);
     },
-    [pages, layout, mode],
+    [pages, pageIndex, layout, mode],
   );
   function exitImmersive() {
     setChrome(true);
@@ -266,7 +275,7 @@ export default function Reader() {
   }
   useEffect(() => {
     function key(event) {
-      if (event.key === "Escape" && !ignoresKeys(event.target)) {
+      if (event.key === "Escape" && (metadata || !ignoresKeys(event.target))) {
         if (metadata) setMetadata(false);
         else if (search.immersive) exitImmersive();
         else setChrome(true);
@@ -304,11 +313,16 @@ export default function Reader() {
     return () => {
       clearTimeout(timer);
       controller.abort();
+    };
+  }, [workId, pageIndex, mode, layout, shown.length, pages.length]);
+  useEffect(
+    () => () => {
       api(`/works/${encoded(workId)}/prefetch?reader_id=${encoded(readerId)}`, {
         method: "DELETE",
       }).catch(() => {});
-    };
-  }, [workId, pageIndex, mode, layout, shown.length, pages.length]);
+    },
+    [workId],
+  );
   async function fullscreen() {
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
@@ -327,12 +341,24 @@ export default function Reader() {
   function preferences() {
     action.mutate({
       path: "/preferences",
+      invalidate: [],
       method: "PUT",
       body: { reader_mode: mode, layout, resize_width: Number(resize), fit },
     });
   }
+  function pointerCancel() {
+    pointer.current = null;
+  }
+  function ignoresPointer(target) {
+    return (
+      ignoresKeys(target) ||
+      !!target?.closest?.(
+        'input, button, a, dialog, [role="dialog"], [role="button"]',
+      )
+    );
+  }
   function pointerDown(event) {
-    if (ignoresKeys(event.target)) return;
+    if (ignoresPointer(event.target)) return;
     if (pointer.current && pointer.current.id !== event.pointerId) {
       pointer.current.cancelled = true;
       return;
@@ -352,7 +378,7 @@ export default function Reader() {
     if (
       !start ||
       start.id !== event.pointerId ||
-      ignoresKeys(event.target) ||
+      ignoresPointer(event.target) ||
       window.getSelection()?.toString()
     )
       return;
@@ -466,6 +492,7 @@ export default function Reader() {
                   path: `/works/${encoded(workId)}/favorite`,
                   method: "PUT",
                   body: { favorite: !work.favorite },
+                  invalidate: [["work", workId], ["works"], ["works-infinite"]],
                 })
               }
             >
@@ -485,6 +512,7 @@ export default function Reader() {
                   action.mutate({
                     path: `/works/${encoded(workId)}/cover`,
                     method: "PUT",
+                    invalidate: [["work", workId], ["works"], ["works-infinite"]],
                     body: { entry_id: pages[pageIndex].entry_id },
                   })
                 }
@@ -496,6 +524,7 @@ export default function Reader() {
                   action.mutate({
                     path: `/works/${encoded(workId)}/cover`,
                     method: "PUT",
+                    invalidate: [["work", workId], ["works"], ["works-infinite"]],
                     body: { entry_id: "" },
                   })
                 }
@@ -529,7 +558,10 @@ export default function Reader() {
       {result.error && user.admin && (
         <button
           onClick={() =>
-            action.mutate({ path: `/works/${encoded(workId)}/retry` })
+            action.mutate({
+              path: `/works/${encoded(workId)}/retry`,
+              invalidate: [["work", workId], ["works"], ["works-infinite"]],
+            })
           }
         >
           Retry page indexing
@@ -548,15 +580,15 @@ export default function Reader() {
               onDimensions={dimensionsLoaded}
               pointerDown={pointerDown}
               pointerUp={pointerUp}
+              pointerCancel={pointerCancel}
             />
           ) : (
             <div
               className="paged-surface"
               onPointerDown={pointerDown}
               onPointerUp={pointerUp}
-              onPointerCancel={() => {
-                if (pointer.current) pointer.current.cancelled = true;
-              }}
+              onPointerCancel={pointerCancel}
+              onLostPointerCapture={pointerCancel}
             >
               <div
                 className={`spread ${shown.length === 2 ? "two" : ""}`}
@@ -641,6 +673,7 @@ function ContinuousReader({
   onDimensions,
   pointerDown,
   pointerUp,
+  pointerCancel,
 }) {
   const container = useRef(null),
     programmatic = useRef(false),
@@ -696,6 +729,8 @@ function ContinuousReader({
       onScroll={scroll}
       onPointerDown={pointerDown}
       onPointerUp={pointerUp}
+      onPointerCancel={pointerCancel}
+      onLostPointerCapture={pointerCancel}
       tabIndex="0"
       aria-label="Continuous reading surface"
     >

@@ -48,9 +48,12 @@ export function navigatePage(
   return index;
 }
 export function ignoresKeys(target) {
-  return !!target?.closest?.(
-    'input, textarea, select, button, a, dialog, [role="dialog"], [role="button"], [contenteditable]:not([contenteditable="false"])',
-  );
+  const input = target?.closest?.("input");
+  if (input)
+    return ![
+      "button", "submit", "reset", "image", "checkbox",
+    ].includes(input.type);
+  return !!target?.isContentEditable || !!target?.closest?.("textarea, select");
 }
 export function keyAction(event, mode = "paged") {
   if (
