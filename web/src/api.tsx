@@ -4,6 +4,9 @@ import type { User, Preferences } from "./types.ts";
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 let csrf = "";
+function setCsrf(token: string) {
+  csrf = token;
+}
 const authClients = new Set<QueryClient>();
 export class APIError extends Error {
   status: number;
@@ -126,6 +129,9 @@ export function Auth({ children }: { children: ReactNode }) {
     };
   }, [client]);
   const me = useAPI<User | null>(["me"], "/auth/me", { retry: false, staleTime: 60_000 });
+  useEffect(() => {
+    if (me.data) setCsrf(me.data.csrf || "");
+  }, [me.data]);
   if (me.isPending)
     return (
       <main className="login">
@@ -133,7 +139,6 @@ export function Auth({ children }: { children: ReactNode }) {
         <Pending />
       </main>
     );
-  if (me.data) csrf = me.data.csrf || "";
   if (!me.data)
     return (
       <Login

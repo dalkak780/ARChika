@@ -1,10 +1,10 @@
 import type { FormEvent, UIEvent } from "react";
 import type { InfiniteData } from "@tanstack/react-query";
 import type { Work, WorksPage, Root, SavedSearch, LibrarySearch } from "./types.ts";
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Link, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { VirtualLibraryRows } from "./virtual.tsx";
 import { api, APIError, encoded, useAPI, useAction, ErrorNotice, Pending } from "./api.tsx";
 
 const route = getRouteApi("/");
@@ -115,7 +115,11 @@ export default function Library() {
   const roots = useAPI<Root[]>(["roots"], "/roots"),
     saved = useAPI<SavedSearch[]>(["saved-searches"], "/saved-searches"),
     action = useAction();
-  useEffect(() => setQuery(search.q), [search.q]);
+  const [previousQuery, setPreviousQuery] = useState(search.q);
+  if (previousQuery !== search.q) {
+    setPreviousQuery(search.q);
+    setQuery(search.q);
+  }
   const update = (patch: Partial<LibrarySearch>) =>
     navigate({
       search: (previous) => ({ ...previous, ...patch, page: patch.page ?? 1 }),
@@ -372,28 +376,29 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
       first.pageNumber > 1 ? { page: first.pageNumber - 1 } : undefined,
   });
   const items = result.data?.pages.flatMap((page) => page.items) || [];
-  const virtual = useVirtualizer({
-    count: Math.ceil(items.length / columns),
-    getScrollElement: () => container.current,
-    estimateSize: () => 312,
-    overscan: 2,
-    initialOffset: scrollPositions.get(key) || 0,
-  });
-  const rows = virtual.getVirtualItems(),
-    lastRowIndex = rows.at(-1)?.index,
-    startPage = result.data?.pages[0]?.pageNumber;
+  const startPage = result.data?.pages[0]?.pageNumber;
   const previousStart = useRef(startPage);
   const restored = useRef(false);
-  function refresh() {
+  function resetScroll() {
     infiniteResume.delete(key);
     scrollPositions.delete(key);
     previousStart.current = undefined;
     restored.current = true;
     if (container.current) container.current.scrollTop = 0;
+  }
+  function refresh() {
+    resetScroll();
     setRefreshCount((count) => count + 1);
   }
+  const [previousError, setPreviousError] = useState<Error | null>(null);
+  if (previousError !== result.error) {
+    setPreviousError(result.error);
+    if (result.error instanceof APIError && result.error.code === "cursor_stale")
+      setRefreshCount((count) => count + 1);
+  }
+  const refreshOnError = useEffectEvent(resetScroll);
   useEffect(() => {
-    if (result.error instanceof APIError && result.error.code === "cursor_stale") refresh();
+    if (result.error instanceof APIError && result.error.code === "cursor_stale") refreshOnError();
   }, [result.error]);
   useEffect(() => {
     if (refreshCount)
@@ -449,15 +454,6 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
     if (container.current) observer.observe(container.current);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => {
-    if (
-      (lastRowIndex ?? -Infinity) >= Math.ceil(items.length / columns) - 2 &&
-      result.hasNextPage &&
-      !result.isFetching &&
-      !result.error
-    )
-      void result.fetchNextPage();
-  }, [lastRowIndex, items.length, columns, result.hasNextPage, result.isFetching, result.error]);
   return (
     <>
       <ErrorNotice error={result.error} />
@@ -483,22 +479,17 @@ function InfiniteLibrary({ search }: { search: LibrarySearch }) {
         tabIndex={0}
         aria-label="Scrollable library results"
       >
-        <div style={{ height: virtual.getTotalSize(), position: "relative" }}>
-          {rows.map((row) => (
-            <div
-              key={row.key}
-              className="virtual-card-row"
-              style={{
-                transform: `translateY(${row.start}px)`,
-                gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-              }}
-            >
-              {items.slice(row.index * columns, (row.index + 1) * columns).map((work) => (
-                <Card key={work.id} work={work} search={search} />
-              ))}
-            </div>
-          ))}
-        </div>
+        <VirtualLibraryRows
+          container={container}
+          items={items}
+          columns={columns}
+          initialOffset={scrollPositions.get(key) || 0}
+          renderItem={(work) => <Card work={work} search={search} />}
+          hasNextPage={result.hasNextPage}
+          isFetching={result.isFetching}
+          error={result.error}
+          fetchNextPage={result.fetchNextPage}
+        />
         {result.isPending && <Pending />}
       </div>
       <button

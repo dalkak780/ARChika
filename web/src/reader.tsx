@@ -1,9 +1,17 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import type { Page, WorkDetail } from "./types.ts";
 import type { Dimensions, GesturePoint, NavigationAction } from "./navigation.ts";
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, getRouteApi, useNavigate, useLocation, useRouter } from "@tanstack/react-router";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { VirtualContinuousPages } from "./virtual.tsx";
 import { useAPI, useAction, useAuth, api, encoded, ErrorNotice, Pending } from "./api.tsx";
 import {
   visiblePages,
@@ -62,16 +70,21 @@ function PageImage({
   const requestController = useRef<AbortController | null>(null),
     fallbackAttempted = useRef(false);
   const loadKey = `${workId}/${page.entry_id}/${page.ordinal}/${width}/${retry}`;
+  const [previousLoadKey, setPreviousLoadKey] = useState(loadKey);
+  if (previousLoadKey !== loadKey) {
+    setPreviousLoadKey(loadKey);
+    setImage(null);
+    setError(null);
+  }
+  const loadPage = useEffectEvent((signal: AbortSignal) => pageBlob(workId, page, width, signal));
   useEffect(() => {
     const controller = new AbortController();
     let objectURL: string | undefined;
     requestController.current = controller;
-    setImage(null);
-    setError(null);
     fallbackAttempted.current = false;
     async function load() {
       try {
-        const result = await pageBlob(workId, page, width, controller.signal);
+        const result = await loadPage(controller.signal);
         if (controller.signal.aborted) return;
         objectURL = URL.createObjectURL(result.blob);
         setImage({ ...result, url: objectURL });
@@ -185,9 +198,14 @@ export default function Reader() {
   const enteredImmersive = useRef(false),
     surface = useRef<HTMLElement>(null),
     pointer = useRef<(GesturePoint & { id: number; type: string }) | null>(null),
-    lastNavigation = useRef({ time: performance.now(), index }),
+    lastNavigation = useRef<{ time: number; index: number } | null>(null),
     velocity = useRef(0),
     direction = useRef(1);
+  const [dimensionsWorkId, setDimensionsWorkId] = useState(workId);
+  if (dimensionsWorkId !== workId) {
+    setDimensionsWorkId(workId);
+    setDimensions({});
+  }
   const pages = useMemo(
     () =>
       (result.data?.pages || []).map((page) => ({
@@ -198,11 +216,6 @@ export default function Reader() {
   );
   const pageIndex = Math.max(0, Math.min(index, Math.max(0, pages.length - 1)));
   const shown = visiblePages(pages, pageIndex, layout);
-  const shownRef = useRef(shown);
-  shownRef.current = shown;
-  useEffect(() => {
-    setDimensions({});
-  }, [workId]);
   useEffect(() => {
     if (!pages.length) return;
     positions.set(workId, pageIndex);
@@ -236,14 +249,14 @@ export default function Reader() {
         pageIndex,
         action,
         mode === "scroll" ? "single" : layout,
-        mode === "scroll" ? [pageIndex] : shownRef.current,
+        mode === "scroll" ? [pageIndex] : visiblePages(pages, pageIndex, layout),
       );
       const now = performance.now();
       direction.current = next >= pageIndex ? 1 : -1;
+      const previous = lastNavigation.current ?? { time: now, index: pageIndex };
       velocity.current = Math.min(
         20,
-        Math.abs(next - lastNavigation.current.index) /
-          Math.max(0.1, (now - lastNavigation.current.time) / 1000),
+        Math.abs(next - previous.index) / Math.max(0.1, (now - previous.time) / 1000),
       );
       lastNavigation.current = { time: now, index: next };
       setIndex(next);
@@ -269,11 +282,12 @@ export default function Reader() {
       search: (old) => ({ ...old, page: pageIndex + 1, immersive: true }),
     });
   }
+  const exitImmersiveOnKey = useEffectEvent(exitImmersive);
   useEffect(() => {
     function key(event: KeyboardEvent) {
       if (event.key === "Escape" && (metadata || !ignoresKeys(event.target))) {
         if (metadata) setMetadata(false);
-        else if (search.immersive) exitImmersive();
+        else if (search.immersive) exitImmersiveOnKey();
         else setChrome(true);
         return;
       }
@@ -286,9 +300,11 @@ export default function Reader() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [go, mode, metadata, search.immersive]);
+  const prefetchPage = useEffectEvent(() => pages[pageIndex]!.ordinal);
   useEffect(() => {
     if (!pages.length) return;
     const controller = new AbortController();
+    const ordinal = prefetchPage();
     const timer = setTimeout(
       () =>
         api(`/works/${encoded(workId)}/prefetch`, {
@@ -296,7 +312,7 @@ export default function Reader() {
           signal: controller.signal,
           body: {
             reader_id: readerId,
-            page: pages[pageIndex]!.ordinal,
+            page: ordinal,
             direction: direction.current,
             velocity: velocity.current,
             visible: mode === "scroll" ? 1 : shown.length,
@@ -652,100 +668,34 @@ export default function Reader() {
     </main>
   );
 }
-function ContinuousReader({
-  workId,
-  pages,
-  index,
-  setIndex,
-  resize,
-  zoom,
-  onDimensions,
-  pointerDown,
-  pointerUp,
-  pointerCancel,
-}: ContinuousReaderProps) {
-  const container = useRef<HTMLDivElement>(null),
-    programmatic = useRef(false),
-    lastReported = useRef(index),
-    [width, setWidth] = useState(800);
-  const virtual = useVirtualizer({
-    count: pages.length,
-    getScrollElement: () => container.current,
-    estimateSize: (i) =>
-      Math.max(
-        window.innerHeight * 0.35,
-        pages[i]!.width && pages[i]!.height
-          ? (width * zoom * pages[i]!.height) / pages[i]!.width + 16
-          : width * 1.4,
-      ),
-    overscan: 1,
-    getItemKey: (i) => pages[i]!.entry_id || pages[i]!.ordinal,
-  });
+
+function ContinuousReader(props: ContinuousReaderProps) {
+  const container = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
   useLayoutEffect(() => {
     const observer = new ResizeObserver((entries) => setWidth(entries[0]!.contentRect.width));
     if (container.current) observer.observe(container.current);
     return () => observer.disconnect();
   }, []);
-  useLayoutEffect(() => {
-    virtual.scrollToIndex(index, { align: "start" });
-  }, []);
-  useEffect(() => {
-    if (lastReported.current !== index) {
-      programmatic.current = true;
-      virtual.scrollToIndex(index, { align: "start" });
-      lastReported.current = index;
-      requestAnimationFrame(() => {
-        programmatic.current = false;
-      });
-    }
-  }, [index]);
-  const rows = virtual.getVirtualItems();
-  function scroll() {
-    if (programmatic.current) return;
-    const offset = container.current!.scrollTop;
-    const current = rows.find((row) => row.end > offset + 30);
-    if (current && current.index !== lastReported.current) {
-      lastReported.current = current.index;
-      setIndex(current.index);
-    }
-  }
   return (
-    <div
-      className="continuous-surface"
-      ref={container}
-      onScroll={scroll}
-      onPointerDown={pointerDown}
-      onPointerUp={pointerUp}
-      onPointerCancel={pointerCancel}
-      onLostPointerCapture={pointerCancel}
-      tabIndex={0}
-      aria-label="Continuous reading surface"
-    >
-      <div
-        style={{
-          height: virtual.getTotalSize(),
-          position: "relative",
-          width: `${zoom * 100}%`,
-        }}
-      >
-        {rows.map((row) => (
-          <div
-            key={row.key}
-            data-index={row.index}
-            ref={virtual.measureElement}
-            className="continuous-page"
-            style={{ transform: `translateY(${row.start}px)` }}
-          >
-            <PageImage
-              workId={workId}
-              page={pages[row.index]!}
-              width={resize}
-              onDimensions={onDimensions}
-            />
-            <span className="page-number">{row.index + 1}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <VirtualContinuousPages
+      pages={props.pages}
+      index={props.index}
+      setIndex={props.setIndex}
+      zoom={props.zoom}
+      pointerDown={props.pointerDown}
+      pointerUp={props.pointerUp}
+      pointerCancel={props.pointerCancel}
+      container={container}
+      width={width}
+      renderPage={(page) => (
+        <PageImage
+          workId={props.workId}
+          page={page}
+          width={props.resize}
+          onDimensions={props.onDimensions}
+        />
+      )}
+    />
   );
 }

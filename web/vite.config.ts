@@ -12,6 +12,13 @@ export default defineConfig({
       "react/exhaustive-deps": "warn",
     },
     options: { typeAware: true, typeCheck: true },
+    overrides: [
+      {
+        // useVirtualizer callers are intentionally opted out with "use no memo".
+        files: ["src/virtual.tsx"],
+        rules: { "react/incompatible-library": "off" },
+      },
+    ],
   },
   plugins: lazyPlugins(() => [react({ compiler: true })]),
   server: { proxy: { "/api": "http://127.0.0.1:8080" } },
