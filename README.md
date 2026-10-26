@@ -66,6 +66,8 @@ Keep the SQLite data directory on a local filesystem; WAL mode doesn't work reli
 
 Requirements: Go 1.25.1+, Node.js 24.11+ and pnpm 12. Linux is the production target; macOS works for development.
 
+The SPA uses TanStack Redact 0.1.5 through its Vite plugin, retaining React imports and the React Compiler. React packages remain installed for types and dependency compatibility. Redact renders synchronously rather than using React's concurrent scheduler. The version is pinned to respect the dependency release-age policy.
+
 ```sh
 make build
 cp archika.example.yaml archika.yaml
@@ -231,12 +233,16 @@ make race   # Go tests with the race detector
 # Frontend only (web/ uses Vite+; vp wraps Vite, Vitest, Oxlint and Oxfmt)
 pnpm --dir web dev     # dev server, proxies /api to 127.0.0.1:8080
 pnpm --dir web check   # format, lint and type check
+pnpm --dir web exec playwright install chromium
+pnpm --dir web run test:e2e  # builds assets, starts an isolated Go server, runs Chromium, cleans up
 
 # Optional, slower checks
 ARCHIKA_SCALE=100000 go test ./internal/app -run TestSearchScale -v -count=1
 ARCHIKA_NETWORK=1 go test ./internal/app -run TestDoHAndPinnedProxySmoke -v -count=1
 go test ./internal/archive -run '^$' -bench Navigation -benchmem
 ```
+
+The E2E check covers authentication, explicit discovery, search/favorites, folder navigation, reader spreads/overview/immersive Back, persisted language changes, mobile continuous virtualization and logout. It uses generated image galleries and a temporary database, not an existing library. Set `ARCHIKA_E2E_IMAGE=archika:local` to exercise a built Docker image with a read-only root filesystem and library, non-root UID and dropped capabilities. `ARCHIKA_E2E_LAYOUT` and `ARCHIKA_E2E_SCREENSHOT` optionally save rendered-layout JSON and a mobile screenshot. Chromium checks do not certify physical mobile gestures, other browser engines or every administration/provider workflow.
 
 `docker build --target verification -t archika:verify .` builds an image with extra diagnostic and fixture-generation tools. The regular runtime image doesn't include them.
 

@@ -1,5 +1,6 @@
 import { defineConfig, lazyPlugins } from "vite-plus";
 import react from "@vitejs/plugin-react";
+import { redact } from "@tanstack/redact/vite";
 
 export default defineConfig({
   fmt: {},
@@ -22,7 +23,8 @@ export default defineConfig({
       },
     ],
   },
-  plugins: lazyPlugins(() => [react({ compiler: true })]),
+  plugins: lazyPlugins(() => [react({ compiler: true }), redact()]),
+  test: { server: { deps: { inline: ["react-i18next"] } } },
   server: { proxy: { "/api": "http://127.0.0.1:8080" } },
   build: { outDir: "dist", emptyOutDir: true },
 });

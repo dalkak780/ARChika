@@ -40,6 +40,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install E2E browser
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test application E2E
+        working-directory: web
+        run: pnpm run test:e2e
+
       - name: Vet
         run: go vet ./...
 

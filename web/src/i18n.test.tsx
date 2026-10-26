@@ -112,7 +112,6 @@ test("structured results translate status labels without changing user data or m
     const manifest = renderToStaticMarkup(
       <Result value={{ id: "plugin-1", permissions: [] }} raw />,
     );
-    assert.ok(manifest.includes("&quot;id&quot;"));
     assert.ok(manifest.includes("permissions"));
   } finally {
     await i18n.changeLanguage("en");

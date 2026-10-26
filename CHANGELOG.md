@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Switch the SPA runtime to TanStack Redact 0.1.5 while retaining React imports and compiler support; inline react-i18next in renderer tests to keep hooks on the same runtime.
+- Add repeatable Chromium E2E verification against an isolated Go server or hardened Docker image, and run the application journeys in CI.
+
 - Prevent reader pages from briefly rendering at a placeholder aspect ratio before expanding to their decoded size, including cached page turns and spread layout.
 
 - Add configurable structured server logging for startup, jobs, scans, indexing, authentication, administration, providers, helpers and HTTP failures.
