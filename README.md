@@ -42,6 +42,19 @@ unset ARCHIKA_INITIAL_PASSWORD
 
 Then open the UI and run **Administration → Jobs → Discover / scan**. ARChika never scans on its own at startup or when you add a root, so the library stays empty until you run this.
 
+### Forgotten account name or password
+
+Stop the server first; these commands refuse to run while it holds the data directory. `users` lists account names. `reset-password` reads the new password from stdin, replaces it for an existing account and signs that account out everywhere. The new password does not require a change at sign-in.
+
+```sh
+docker compose stop archika
+docker compose run --rm -T archika users
+read -rs ARCHIKA_NEW_PASSWORD
+printf '%s\n' "$ARCHIKA_NEW_PASSWORD" | docker compose run --rm -T archika reset-password --name admin
+unset ARCHIKA_NEW_PASSWORD
+docker compose start archika
+```
+
 ### Prebuilt images
 
 Multi-arch images (`linux/amd64`, `linux/arm64`) are published to `ghcr.io/dalkak780/archika`:

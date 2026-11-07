@@ -84,7 +84,7 @@ func run() error {
 	}
 	flags := flag.NewFlagSet("archika "+command, flag.ContinueOnError)
 	configPath := flags.String("config", os.Getenv("ARCHIKA_CONFIG"), "JSON configuration path")
-	name := flags.String("name", "admin", "Initial administrator account name")
+	name := flags.String("name", "admin", "Account name (admin, reset-password)")
 	if e := flags.Parse(args); e != nil {
 		return e
 	}
@@ -92,29 +92,12 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	if command == "admin" {
-		password, e := io.ReadAll(io.LimitReader(os.Stdin, 1026))
-		if e != nil {
-			return e
-		}
-		lock, e := app.LockDirectory(c.DataDir)
-		if e != nil {
-			return e
-		}
-		defer lock.Close()
-		db, e := app.OpenDB(c)
-		if e != nil {
-			return e
-		}
-		defer db.Close()
-		if e = app.BootstrapAdmin(db, *name, strings.TrimSuffix(strings.TrimSuffix(string(password), "\n"), "\r"), c.Password); e != nil {
-			return e
-		}
-		fmt.Println("Administrator created; no library scan was started.")
-		return nil
-	}
-	if command != "serve" {
-		return errors.New("commands: serve, admin (password on stdin), keygen")
+	switch command {
+	case "admin", "reset-password", "users":
+		return accountCommand(command, *name, c)
+	case "serve":
+	default:
+		return errors.New("commands: serve, admin (password on stdin), reset-password (password on stdin), users, keygen")
 	}
 	a, e := app.New(c)
 	if e != nil {
@@ -152,6 +135,57 @@ func run() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(ctx)
+	}
+	return nil
+}
+
+// accountCommand runs the offline account commands. They take the data
+// directory lock, so they refuse to run while the server is up.
+func accountCommand(command, name string, c app.Config) error {
+	var password string
+	if command != "users" {
+		b, e := io.ReadAll(io.LimitReader(os.Stdin, 1026))
+		if e != nil {
+			return e
+		}
+		password = strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
+	}
+	lock, e := app.LockDirectory(c.DataDir)
+	if e != nil {
+		return fmt.Errorf("%w (stop the server first)", e)
+	}
+	defer lock.Close()
+	db, e := app.OpenDB(c)
+	if e != nil {
+		return e
+	}
+	defer db.Close()
+	switch command {
+	case "admin":
+		if e = app.BootstrapAdmin(db, name, password, c.Password); e != nil {
+			return e
+		}
+		fmt.Println("Administrator created; no library scan was started.")
+	case "reset-password":
+		if e = app.ResetPassword(db, name, password, c.Password); e != nil {
+			return e
+		}
+		fmt.Printf("Password for %q reset; its sessions were signed out.\n", name)
+	case "users":
+		accounts, e := app.ListAccounts(db)
+		if e != nil {
+			return e
+		}
+		for _, a := range accounts {
+			flags := ""
+			if a.Admin {
+				flags += " admin"
+			}
+			if a.Disabled {
+				flags += " disabled"
+			}
+			fmt.Printf("%s%s\n", a.Name, flags)
+		}
 	}
 	return nil
 }

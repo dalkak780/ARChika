@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add offline `users` and `reset-password` commands to recover a forgotten account name or password; they refuse to run while the server is up and sign the account out.
 - Switch the SPA runtime to TanStack Redact 0.1.5 while retaining React imports and compiler support; inline react-i18next in renderer tests to keep hooks on the same runtime.
 - Add repeatable Chromium E2E verification against an isolated Go server or hardened Docker image, and run the application journeys in CI.
 
